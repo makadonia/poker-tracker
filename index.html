@@ -197,13 +197,14 @@ details[open] summary:before{content:'▾ ';}
    =========================================================== */
 'use strict';
 
+const APP_VERSION = 'v1.4';
 const KEY = 'pokerlog_mtt_v1';
 const DEFAULTS = {
   v: 1,
   settings: {
     provider: 'anthropic',
     apiKey: '',
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-5',
     currency: '円',
     coach: 'balanced',
     heroName: ''
@@ -227,6 +228,15 @@ function load() {
     return structuredClone(DEFAULTS);
   }
 }
+/** 旧バージョンで保存された古いモデル名を現行IDへ読み替える */
+const MODEL_FIX = {
+  'claude-sonnet-4-5': 'claude-sonnet-5',
+  'claude-opus-4-5': 'claude-opus-5',
+  'claude-3-5-sonnet-latest': 'claude-sonnet-5',
+  'claude-3-opus-20240229': 'claude-opus-5'
+};
+if (MODEL_FIX[DB.settings.model]) DB.settings.model = MODEL_FIX[DB.settings.model];
+
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); }
   catch (e) { toast('保存に失敗しました（容量超過？）'); }
@@ -775,10 +785,13 @@ function viewSettings() {
       <input type="password" id="st-key" value="${esc(st.apiKey)}" placeholder="sk-ant-... / sk-..." autocomplete="off"></label>
     <label class="f"><span>モデル名</span>
       <input type="text" id="st-model" value="${esc(st.model)}" placeholder="claude-sonnet-4-5"></label>
-    <div class="chips" style="margin:-4px 0 10px">
-      ${['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'gpt-5.1', 'gpt-4o']
-      .map(m => `<span class="chip" data-a="setmodel" data-m="${m}">${m}</span>`).join('')}
+    <div class="chips" style="margin:-4px 0 4px">
+      ${(st.provider === 'openai'
+      ? [['gpt-5.1', '高性能'], ['gpt-4o', '安価']]
+      : [['claude-sonnet-5', 'おすすめ・バランス'], ['claude-opus-5', '最高精度'], ['claude-haiku-4-5', '最安・高速']])
+      .map(([m, note]) => `<span class="chip ${st.model === m ? 'on' : ''}" data-a="setmodel" data-m="${m}">${m}<span class="muted tiny"> ${note}</span></span>`).join('')}
     </div>
+    <div class="tiny muted" style="margin-bottom:10px">目安コスト（1ハンド分析あたり）：Haiku 4.5 ≈ 1円 / Sonnet 5 ≈ 2〜3円 / Opus 5 ≈ 5〜6円</div>
     <label class="f"><span>コーチのスタイル</span>
       <select id="st-coach">
         <option value="balanced" ${st.coach === 'balanced' ? 'selected' : ''}>バランス型（GTO基準＋実戦調整）</option>
@@ -788,7 +801,11 @@ function viewSettings() {
       </select></label>
     <label class="f"><span>通貨単位</span>
       <input type="text" id="st-cur" value="${esc(st.currency)}"></label>
-    <button class="btn full" data-a="savesettings">設定を保存</button>
+    <div class="grid2">
+      <button class="btn" data-a="savesettings">設定を保存</button>
+      <button class="btn ghost" data-a="testapi">接続テスト</button>
+    </div>
+    <div id="api-test" style="margin-top:10px"></div>
     <div class="tiny muted" style="margin-top:10px">
       APIキーは外部に送信されず、この端末の localStorage にのみ保存されます。<br>
       ※ ブラウザから直接APIを呼ぶ都合上、<b>https で公開したページ</b>から使うのが確実です（ファイルを直接開いた場合は通信が拒否されることがあります）。その場合は「プロンプトをコピー」機能をお使いください。
@@ -806,6 +823,9 @@ function viewSettings() {
       <input type="file" id="importfile" accept="application/json"></label>
     </div>
     <div class="tiny muted">セッション ${DB.sessions.length} 件 / ハンド ${DB.hands.length} 件</div>
+    <hr>
+    <button class="btn ghost full sm" data-a="forceupdate">アプリを最新版に更新する</button>
+    <div class="tiny muted" style="margin-top:6px">表示が古いままのときに押してください。記録したデータは消えません。（現在 ${APP_VERSION}）</div>
     <hr>
     <button class="btn danger full sm" data-a="wipe">全データを削除</button>
   </div>
@@ -1415,43 +1435,74 @@ ${body || '-'}
 }
 
 /* ---------- API 呼び出し ---------- */
-async function callAI(user) {
+/** エラーを日本語の原因つきに変換 */
+function apiError(status, msg) {
+  const m = String(msg || '');
+  if (status === 401 || /authentication|invalid x-api-key|Incorrect API key/i.test(m))
+    return 'APIキーが正しくありません。設定画面でキーを貼り直してください（先頭の sk- から末尾まで、余分な空白なしで）。';
+  if (status === 404 || /model/i.test(m) && /not.*(found|exist)/i.test(m))
+    return 'モデル名が見つかりません。設定画面のモデル名を、候補チップから選び直してください。\n（詳細: ' + m + '）';
+  if (status === 400 && /credit balance|quota|billing/i.test(m))
+    return 'APIの残高が不足しています。コンソールの Billing でクレジットを購入してください。';
+  if (status === 429)
+    return '短時間に送りすぎです（レート制限）。1分ほど待ってからもう一度お試しください。';
+  if (status === 529 || status === 503)
+    return 'AI側が混み合っています。少し待ってから再実行してください。';
+  return 'APIエラー' + (status ? ' (' + status + ')' : '') + '：' + m;
+}
+
+async function callAPI(user, maxTokens) {
   const st = DB.settings;
   if (st.provider === 'none' || !st.apiKey) {
     throw new Error('APIキーが未設定です。設定画面でキーを入力するか、「プロンプトをコピー」でClaudeアプリに貼り付けてください。');
   }
   const sys = systemPrompt();
-  if (st.provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': st.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: st.model || 'claude-sonnet-4-5',
-        max_tokens: 2000,
-        system: sys,
-        messages: [{ role: 'user', content: user }]
-      })
-    });
-    const j = await res.json();
-    if (!res.ok) throw new Error((j.error && j.error.message) || ('APIエラー ' + res.status));
-    return (j.content || []).map(c => c.text || '').join('').trim();
-  } else {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + st.apiKey },
-      body: JSON.stringify({
-        model: st.model || 'gpt-4o',
-        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }]
-      })
-    });
-    const j = await res.json();
-    if (!res.ok) throw new Error((j.error && j.error.message) || ('APIエラー ' + res.status));
-    return ((j.choices || [])[0] || {}).message.content.trim();
+  const isAnthropic = st.provider === 'anthropic';
+  const url = isAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions';
+  const headers = isAnthropic
+    ? {
+      'content-type': 'application/json',
+      'x-api-key': st.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    }
+    : { 'content-type': 'application/json', 'authorization': 'Bearer ' + st.apiKey };
+  const body = isAnthropic
+    ? { model: st.model, max_tokens: maxTokens || 2000, system: sys, messages: [{ role: 'user', content: user }] }
+    : { model: st.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] };
+
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  } catch (e) {
+    throw new Error('AIサーバーに接続できませんでした。\n・ファイルを直接開いている場合はブラウザの制限で通信できません → https で公開したURLから開いてください\n・オフラインでないかも確認してください');
+  }
+  let j = {};
+  try { j = await res.json(); } catch (e) { }
+  if (!res.ok) throw new Error(apiError(res.status, (j.error && (j.error.message || j.error.type)) || res.statusText));
+  const text = isAnthropic
+    ? (j.content || []).map(c => c.text || '').join('').trim()
+    : (((j.choices || [])[0] || {}).message || {}).content;
+  if (!text) throw new Error('AIから空の回答が返りました。もう一度お試しください。');
+  return text.trim();
+}
+
+const callAI = (user) => callAPI(user, 2000);
+
+/** 接続テスト */
+async function testAPI() {
+  const out = $('#api-test');
+  if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> 接続を確認しています…</div>';
+  try {
+    const t = await callAPI('これは接続テストです。「接続できました」とだけ返してください。', 32);
+    if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--accent)">✅ 接続成功
+プロバイダ: ${esc(DB.settings.provider)}
+モデル: ${esc(DB.settings.model)}
+AIの返答: ${esc(t)}</div>`;
+  } catch (e) {
+    if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--red)">❌ 接続できませんでした
+
+${esc(String(e.message || e))}</div>`;
   }
 }
 
@@ -1512,6 +1563,13 @@ function bindView() {
   });
   const imp = $('#importfile');
   if (imp) imp.addEventListener('change', importJSON);
+  const pv = $('#st-provider');
+  if (pv) pv.addEventListener('change', () => {
+    snapSettings();
+    if (DB.settings.provider === 'openai' && DB.settings.model.startsWith('claude')) DB.settings.model = 'gpt-5.1';
+    if (DB.settings.provider === 'anthropic' && DB.settings.model.startsWith('gpt')) DB.settings.model = 'claude-sonnet-5';
+    save(); render();
+  });
 }
 
 const ACTIONS = {
@@ -1673,7 +1731,11 @@ const ACTIONS = {
   },
 
   // 設定
-  setmodel: (d) => { $('#st-model').value = d.m; },
+  setmodel: (d) => {
+    snapSettings();                 // 入力中のAPIキーなどを失わないよう先に保存
+    DB.settings.model = d.m;
+    save(); render();
+  },
   savesettings: () => {
     DB.settings.provider = $('#st-provider').value;
     DB.settings.apiKey = $('#st-key').value.trim();
@@ -1681,6 +1743,21 @@ const ACTIONS = {
     DB.settings.coach = $('#st-coach').value;
     DB.settings.currency = $('#st-cur').value || '円';
     save(); toast('設定を保存しました'); render();
+  },
+  testapi: () => { snapSettings(); testAPI(); },
+  forceupdate: async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const rs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(rs.map(r => r.unregister()));
+      }
+      if (window.caches) {
+        const ks = await caches.keys();
+        await Promise.all(ks.map(k => caches.delete(k)));
+      }
+    } catch (e) { }
+    toast('最新版を読み込みます…');
+    setTimeout(() => location.replace(location.pathname + '?u=' + Date.now()), 600);
   },
   export: () => {
     const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
@@ -1702,6 +1779,17 @@ const ACTIONS = {
     DB = structuredClone(DEFAULTS); save(); go('dash'); toast('削除しました');
   }
 };
+
+/** 設定画面の入力中の値をDBへ写す */
+function snapSettings() {
+  if (!$('#st-provider')) return;
+  DB.settings.provider = $('#st-provider').value;
+  DB.settings.apiKey = $('#st-key').value.trim();
+  DB.settings.model = $('#st-model').value.trim();
+  DB.settings.coach = $('#st-coach').value;
+  if ($('#st-cur')) DB.settings.currency = $('#st-cur').value || '円';
+  save();
+}
 
 function addAction(st, forcedAmt) {
   const h = currentHand(); if (!h) return;
@@ -1756,7 +1844,14 @@ function boot() {
   $$('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.v)));
   render();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('./sw.js').catch(() => { });
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return; reloaded = true; location.reload();   // 新バージョンを自動反映
+    });
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      reg.update();
+      setInterval(() => reg.update(), 30 * 60 * 1000);
+    }).catch(() => { });
   }
 }
 document.addEventListener('DOMContentLoaded', boot);
