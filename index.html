@@ -197,7 +197,7 @@ details[open] summary:before{content:'▾ ';}
    =========================================================== */
 'use strict';
 
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.5';
 const KEY = 'pokerlog_mtt_v1';
 const DEFAULTS = {
   v: 1,
@@ -328,10 +328,14 @@ function newHand(sessionId) {
     sessionId: sessionId,
     createdAt: Date.now(),
     level: last ? Object.assign({}, last.level) : { sb: 100, bb: 200, ante: 200 },
+    anteEqBB: last ? last.anteEqBB !== false : true,   // アンティ＝BBが既定
+    unit: last ? (last.unit || 'bb') : 'bb',           // スタックの入力単位
     tableSize: last ? last.tableSize : (s.tableSize || 9),
     heroPos: 'BTN',
     heroBB: last ? last.heroBB : 40,
     effBB: last ? last.effBB : 40,
+    heroChips: last ? last.heroChips : null,
+    effChips: last ? last.effChips : null,
     playersIn: 0,
     cards: { hero: [], flop: [], turn: [], river: [] },
     streets: { pre: [], flop: [], turn: [], river: [] },
@@ -988,13 +992,42 @@ function viewHand() {
     <div class="grid3">
       <label class="f" style="margin:0"><span>SB</span><input type="number" data-k="level.sb" value="${h.level.sb}" inputmode="numeric"></label>
       <label class="f" style="margin:0"><span>BB</span><input type="number" data-k="level.bb" value="${h.level.bb}" inputmode="numeric"></label>
-      <label class="f" style="margin:0"><span>アンティ</span><input type="number" data-k="level.ante" value="${h.level.ante}" inputmode="numeric"></label>
+      <label class="f" style="margin:0"><span>アンティ</span>
+        <input type="number" data-k="level.ante" value="${h.level.ante}" inputmode="numeric"
+          ${h.anteEqBB ? 'readonly style="opacity:.6"' : ''}></label>
     </div>
-    <div class="grid3" style="margin-top:8px">
+    <label class="small" style="display:block;margin:-4px 0 10px">
+      <input type="checkbox" data-a="toggleante" ${h.anteEqBB ? 'checked' : ''} style="width:auto;margin-right:6px">
+      アンティはBBと同額（BBアンティ）
+    </label>
+
+    <div class="grid2">
       <label class="f" style="margin:0"><span>テーブル人数</span>
         <select data-k="tableSize">${[9, 8, 7, 6, 5, 4, 3, 2].map(n => `<option value="${n}" ${h.tableSize == n ? 'selected' : ''}>${n}人</option>`).join('')}</select></label>
-      <label class="f" style="margin:0"><span>自分のスタック(BB)</span><input type="number" step="0.5" data-k="heroBB" value="${h.heroBB}" inputmode="decimal"></label>
-      <label class="f" style="margin:0"><span>実効スタック(BB)</span><input type="number" step="0.5" data-k="effBB" value="${h.effBB}" inputmode="decimal"></label>
+      <div>
+        <div class="tiny muted" style="margin-bottom:4px">スタックの入力単位</div>
+        <div class="chips">
+          <span class="chip ${h.unit !== 'chips' ? 'on' : ''}" data-a="unit" data-u="bb">BB数</span>
+          <span class="chip ${h.unit === 'chips' ? 'on' : ''}" data-a="unit" data-u="chips">チップ数</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      ${h.unit === 'chips' ? `
+      <label class="f" style="margin:0"><span>自分のスタック（チップ）</span>
+        <input type="number" data-k="heroChips" value="${h.heroChips != null ? h.heroChips : ''}" inputmode="numeric" placeholder="例 64000">
+        <span class="tiny" style="color:var(--accent)">= ${r1(h.heroBB)}BB</span></label>
+      <label class="f" style="margin:0"><span>実効スタック（チップ）</span>
+        <input type="number" data-k="effChips" value="${h.effChips != null ? h.effChips : ''}" inputmode="numeric" placeholder="少ない方">
+        <span class="tiny" style="color:var(--accent)">= ${r1(h.effBB)}BB</span></label>`
+      : `
+      <label class="f" style="margin:0"><span>自分のスタック(BB)</span>
+        <input type="number" step="0.5" data-k="heroBB" value="${h.heroBB}" inputmode="decimal">
+        <span class="tiny muted">${Math.round(h.heroBB * h.level.bb).toLocaleString()} チップ相当</span></label>
+      <label class="f" style="margin:0"><span>実効スタック(BB)</span>
+        <input type="number" step="0.5" data-k="effBB" value="${h.effBB}" inputmode="decimal">
+        <span class="tiny muted">自分と相手の少ない方</span></label>`}
     </div>
     <div style="margin-top:10px">
       <div class="tiny muted" style="margin-bottom:4px">自分のポジション</div>
@@ -1544,6 +1577,18 @@ function setPath(obj, path, val) {
 
 function currentHand() { return DB.hands.find(x => x.id === STATE.handId); }
 
+/** チップ数 → BB数 */
+function chipsToBB(h, chips) {
+  const bb = num(h.level.bb) || 1;
+  return r1(num(chips) / bb);
+}
+/** ブラインドが変わったとき、チップ数を基準にBB数を計算し直す */
+function syncChips(h) {
+  if (h.unit !== 'chips') return;
+  if (h.heroChips != null) h.heroBB = chipsToBB(h, h.heroChips);
+  if (h.effChips != null) h.effBB = chipsToBB(h, h.effChips);
+}
+
 function bindView() {
   // フィールド変更
   $$('#app [data-k]').forEach(el => {
@@ -1557,8 +1602,23 @@ function bindView() {
       else v = el.value;
       setPath(h, k, v);
       if (k === 'tableSize' && !positions(v).includes(h.heroPos)) h.heroPos = positions(v)[positions(v).length - 1];
+
+      // BBを変えたら：アンティ連動 ＋ チップ入力ならBB数を再計算
+      if (k === 'level.bb') {
+        if (h.anteEqBB) h.level.ante = num(v);
+        syncChips(h);
+      }
+      // アンティを手で変えたら連動を解除
+      if (k === 'level.ante' && num(v) !== num(h.level.bb)) h.anteEqBB = false;
+      // チップ数入力 → BB数へ換算
+      if (k === 'heroChips') h.heroBB = chipsToBB(h, v);
+      if (k === 'effChips') h.effBB = chipsToBB(h, v);
+      // BB数を直接いじったらチップ側も合わせる
+      if (k === 'heroBB') h.heroChips = Math.round(num(v) * (h.level.bb || 1));
+      if (k === 'effBB') h.effChips = Math.round(num(v) * (h.level.bb || 1));
+
       save();
-      if (['level.sb', 'level.bb', 'level.ante', 'tableSize', 'effBB', 'heroBB'].includes(k)) render();
+      if (['level.sb', 'level.bb', 'level.ante', 'tableSize', 'effBB', 'heroBB', 'heroChips', 'effChips'].includes(k)) render();
     });
   });
   const imp = $('#importfile');
@@ -1601,6 +1661,25 @@ const ACTIONS = {
   },
 
   heropos: (d) => { const h = currentHand(); if (h) { h.heroPos = d.p; save(); render(); } },
+
+  // アンティ＝BB の連動トグル
+  toggleante: (d, el) => {
+    const h = currentHand(); if (!h) return;
+    h.anteEqBB = !h.anteEqBB;
+    if (h.anteEqBB) h.level.ante = num(h.level.bb);
+    save(); render();
+  },
+  // スタックの入力単位（BB数 ⇄ チップ数）
+  unit: (d) => {
+    const h = currentHand(); if (!h) return;
+    h.unit = d.u;
+    if (d.u === 'chips') {                       // BB数からチップ数を埋めておく
+      const bb = h.level.bb || 1;
+      if (h.heroChips == null) h.heroChips = Math.round(num(h.heroBB) * bb);
+      if (h.effChips == null) h.effChips = Math.round(num(h.effBB) * bb);
+    }
+    save(); render();
+  },
 
   // カード
   pick: (d) => { const h = currentHand(); if (h) openPicker(d.t, +d.n, h); },
