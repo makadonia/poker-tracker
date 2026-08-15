@@ -176,6 +176,19 @@ details[open] summary:before{content:'▾ ';}
 .aibox .mdh:first-child{margin-top:0}
 .aibox b{color:#fff}
 .chip.on .muted{color:rgba(255,255,255,.78)}
+
+/* クイック集計 */
+.tallygrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
+.tallybtn{position:relative;background:var(--bg3);border:1px solid var(--line);border-radius:12px;
+  padding:16px 4px 14px;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--fg);
+  display:flex;flex-direction:column;align-items:center;gap:4px}
+.tallybtn:active{transform:scale(.96);border-color:var(--accent)}
+.tallybtn .tc{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--fg2)}
+.tallybtn.t-fold{opacity:.85}
+.tallybtn.t-open,.tallybtn.t-threebet,.tallybtn.t-allin{border-color:#2b4034}
+.tallybtn.t-open .tc,.tallybtn.t-threebet .tc,.tallybtn.t-allin .tc{color:var(--accent)}
+.tallybtn.t-limp{border-color:#3d3320}
+.tallybtn.t-limp .tc{color:var(--gold)}
 </style>
 </head>
 <body>
@@ -202,7 +215,7 @@ details[open] summary:before{content:'▾ ';}
    =========================================================== */
 'use strict';
 
-const APP_VERSION = 'v1.7';
+const APP_VERSION = 'v1.8';
 const KEY = 'pokerlog_mtt_v1';
 const DEFAULTS = {
   v: 1,
@@ -463,6 +476,36 @@ function sessionStats(list) {
   };
 }
 
+/* ---------- クイック集計（全ハンドのワンタップ記録） ---------- */
+const TALLY_KEYS = [
+  { k: 'fold', ja: 'フォールド', vpip: false, pfr: false },
+  { k: 'limp', ja: 'リンプ', vpip: true, pfr: false },
+  { k: 'call', ja: 'コール参加', vpip: true, pfr: false },
+  { k: 'open', ja: 'レイズ', vpip: true, pfr: true },
+  { k: 'threebet', ja: '3ベット+', vpip: true, pfr: true },
+  { k: 'allin', ja: 'オールイン', vpip: true, pfr: true }
+];
+function emptyTally() { const t = { n: 0 }; TALLY_KEYS.forEach(x => t[x.k] = 0); return t; }
+function tallyStats(list) {
+  list = list || DB.sessions;
+  const t = emptyTally();
+  for (const s of list) {
+    if (!s.tally) continue;
+    t.n += num(s.tally.n);
+    TALLY_KEYS.forEach(x => t[x.k] += num(s.tally[x.k]));
+  }
+  if (!t.n) return { n: 0 };
+  const vpipN = TALLY_KEYS.filter(x => x.vpip).reduce((a, x) => a + t[x.k], 0);
+  const pfrN = TALLY_KEYS.filter(x => x.pfr).reduce((a, x) => a + t[x.k], 0);
+  return {
+    n: t.n, counts: t,
+    vpip: vpipN / t.n,
+    pfr: pfrN / t.n,
+    threeBet: (t.threebet + t.allin) / t.n,
+    limpRate: t.limp / t.n
+  };
+}
+
 function handStats(list) {
   list = list || DB.hands;
   const n = list.length;
@@ -586,8 +629,22 @@ function viewDash() {
     </div>
   </div>
 
+  ${(() => {
+    const ts = tallyStats();
+    if (!ts.n) return '';
+    return `<div class="card">
+    <h2>参加頻度（クイック集計 ${ts.n} ハンド）</h2>
+    <div class="grid3">
+      <div class="stat"><div class="v">${(ts.vpip * 100).toFixed(0)}</div><div class="k">VPIP %</div></div>
+      <div class="stat"><div class="v">${(ts.pfr * 100).toFixed(0)}</div><div class="k">PFR %</div></div>
+      <div class="stat"><div class="v">${(ts.threeBet * 100).toFixed(0)}</div><div class="k">3BET+ %</div></div>
+    </div>
+    <div class="tiny muted" style="margin-top:8px">全ハンドのワンタップ集計が母数。目安：VPIP 20-28% / PFR 16-24%${ts.limpRate > 0.05 ? ` ／ <span style="color:var(--gold)">リンプ率 ${(ts.limpRate * 100).toFixed(0)}%</span>` : ''}</div>
+  </div>`;
+  })()}
+
   <div class="card">
-    <h2>ハンド統計 <span class="muted tiny">(${hs.n || 0} ハンド)</span></h2>
+    <h2>詳細記録ハンドの統計 <span class="muted tiny">(${hs.n || 0} ハンド)</span></h2>
     ${hs.n ? `
     <div class="grid3">
       <div class="stat"><div class="v">${(hs.vpip * 100).toFixed(0)}</div><div class="k">VPIP %</div></div>
@@ -671,7 +728,9 @@ function viewSession() {
       <div class="tiny muted" style="margin-top:6px">${esc(s.ai.at)} · ${esc(s.ai.model)}${s.ai.usage ? ' · ' + esc(usageLine(s.ai.usage)) : ''}</div>` : ''}
   </div>` : ''}
 
-  <button class="btn full" data-a="newhand" data-id="${s.id}" style="margin-bottom:12px">＋ ハンドを記録</button>
+  ${tallyCard(s)}
+
+  <button class="btn full" data-a="newhand" data-id="${s.id}" style="margin-bottom:12px">＋ ハンドを記録（詳細）</button>
 
   <h2 class="small muted" style="margin:14px 2px 8px">ハンド (${hands.length})</h2>
   ${hands.length ? hands.map(handRow).join('') : '<div class="empty-state">まだハンドがありません</div>'}
@@ -697,6 +756,31 @@ function handRow(h) {
         ${h.ai ? '<span class="badge p tiny">AI</span>' : ''}
       </div>
     </div>
+  </div>`;
+}
+
+/* ---------------- クイック集計カード ---------------- */
+function tallyCard(s) {
+  const t = s.tally || emptyTally();
+  const ts = tallyStats([s]);
+  const open = STATE.tallyOpen !== false;   // 既定で開く
+  return `<div class="card" style="border-color:#2b4034">
+    <div class="spread" data-a="tallytoggle" style="cursor:pointer">
+      <h2 style="margin:0">クイック集計 <span class="muted tiny">全ハンドをワンタップで数える</span></h2>
+      <span class="badge g">${t.n} ハンド</span>
+    </div>
+    ${open ? `
+    <div class="tiny muted" style="margin:8px 0 8px">プリフロップで自分が取った行動を1ハンド1タップ。これが参加率の母数になります。</div>
+    <div class="tallygrid">
+      ${TALLY_KEYS.map(x => `<button class="tallybtn t-${x.k}" data-a="tally" data-id="${s.id}" data-k="${x.k}">
+        ${x.ja}<span class="tc">${t[x.k]}</span></button>`).join('')}
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="tiny" style="flex:1">
+        ${ts.n ? `VPIP <b>${(ts.vpip * 100).toFixed(0)}%</b> ／ PFR <b>${(ts.pfr * 100).toFixed(0)}%</b> ／ 3bet+ <b>${(ts.threeBet * 100).toFixed(0)}%</b>` : '<span class="muted">タップすると VPIP / PFR が出ます</span>'}
+      </div>
+      <button class="btn ghost sm" data-a="tallyundo" data-id="${s.id}" ${!(s.tallyLog || []).length ? 'disabled' : ''}>1つ戻す</button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -750,6 +834,23 @@ function viewStats() {
     </table>
   </div>
 
+  ${(() => {
+    const ts = tallyStats();
+    if (!ts.n) return '';
+    const c = ts.counts;
+    return `<div class="card">
+    <h2>参加頻度（クイック集計）</h2>
+    ${barChart(TALLY_KEYS.map(x => ({ k: x.ja, v: c[x.k], sub: ts.n ? (c[x.k] / ts.n * 100).toFixed(0) + '%' : '' })), v => v + 'ハンド')}
+    <table class="t" style="margin-top:8px">
+      <tr><th>指標</th><th>実測</th><th>一般的な目安</th></tr>
+      <tr><td>VPIP（参加率）</td><td><b>${(ts.vpip * 100).toFixed(1)}%</b></td><td class="muted">20-28%</td></tr>
+      <tr><td>PFR（レイズ参加率）</td><td><b>${(ts.pfr * 100).toFixed(1)}%</b></td><td class="muted">16-24%</td></tr>
+      <tr><td>3BET+</td><td><b>${(ts.threeBet * 100).toFixed(1)}%</b></td><td class="muted">6-11%</td></tr>
+      <tr><td>リンプ率</td><td><b>${(ts.limpRate * 100).toFixed(1)}%</b></td><td class="muted">0-3%</td></tr>
+    </table>
+  </div>`;
+  })()}
+
   ${hs.n ? `
   <div class="card">
     <h2>ポジション別 BB収支</h2>
@@ -767,7 +868,7 @@ function viewStats() {
       <tr><td>オールイン関与</td><td>${(hs.allinRate * 100).toFixed(1)}%</td><td class="muted">-</td></tr>
       <tr><td>オールイン収支</td><td class="${sign(hs.allinNet)}">${fmtBB(hs.allinNet)}</td><td class="muted">-</td></tr>
     </table>
-    <div class="tiny muted" style="margin-top:8px">※ 記録したハンドのみが母数です。記録が偏ると数値も偏ります。</div>
+    <div class="tiny muted" style="margin-top:8px">※ この表は「詳細記録したハンド」だけが母数です（大きく負けたハンドに偏りがち）。実際の参加頻度は上のクイック集計をご覧ください。</div>
   </div>` : ''}
 
   <div class="card">
@@ -1491,8 +1592,11 @@ function sessionPrompt(s) {
 参加者: ${s.entrants || '?'}人 / 結果: ${s.finish || '?'}位 / 収支: ${fmtMoney(sessionProfit(s))}
 ${s.notes ? '自分のメモ: ' + s.notes : ''}
 
-【記録ハンドの傾向】
-ハンド数 ${hs.n} / VPIP ${(hs.vpip * 100).toFixed(0)}% / PFR ${(hs.pfr * 100).toFixed(0)}% / 3BET+ ${(hs.threeBet * 100).toFixed(0)}% / BB収支 ${r1(hs.net)}BB
+【参加頻度（全ハンドのワンタップ集計）】
+${(() => { const ts = tallyStats([s]); return ts.n ? `${ts.n}ハンド / VPIP ${(ts.vpip * 100).toFixed(0)}% / PFR ${(ts.pfr * 100).toFixed(0)}% / 3BET+ ${(ts.threeBet * 100).toFixed(0)}% / リンプ率 ${(ts.limpRate * 100).toFixed(0)}%` : '集計なし'; })()}
+
+【詳細記録ハンドの傾向】（印象的なハンドのみの抜粋。頻度の母数には使えない）
+ハンド数 ${hs.n} / BB収支 ${r1(hs.net)}BB
 
 ${body}
 
@@ -1511,11 +1615,17 @@ function leakPrompt() {
   const posLines = Object.entries(hs.byPos || {})
     .map(([k, v]) => `${k}: ${v.n}ハンド, 収支${r1(v.net)}BB, VPIP ${(v.vpip / v.n * 100).toFixed(0)}%`).join('\n');
   const body = hands.map((h, i) => `■${i + 1} ${h.heroPos} ${cardsTxt(h.cards.hero)} eff${h.effBB}BB → ${fmtBB(num(h.result))}${h.memo ? ' / メモ:' + h.memo : ''}`).join('\n');
+  const ts = tallyStats();
+  const tallyLine = ts.n
+    ? `全ハンド集計 ${ts.n}ハンド / VPIP ${(ts.vpip * 100).toFixed(1)}% / PFR ${(ts.pfr * 100).toFixed(1)}% / 3BET+ ${(ts.threeBet * 100).toFixed(1)}% / リンプ率 ${(ts.limpRate * 100).toFixed(1)}%
+（↑これはワンタップ集計による全ハンドの実測値。参加頻度の評価にはこちらを使うこと）`
+    : '全ハンド集計: なし（参加頻度の実測データはありません）';
   return `私のポーカー記録全体から、繰り返し現れているリーク（弱点）を特定してください。
 
 【通算】
 トーナメント ${ss.n}回 / ROI ${(ss.roi * 100).toFixed(0)}% / ITM ${(ss.itmRate * 100).toFixed(0)}%
-記録ハンド ${hs.n} / VPIP ${(hs.vpip * 100).toFixed(0)}% / PFR ${(hs.pfr * 100).toFixed(0)}% / 3BET+ ${(hs.threeBet * 100).toFixed(0)}% / WTSD ${(hs.wtsd * 100).toFixed(0)}%
+${tallyLine}
+詳細記録ハンド ${hs.n}（※こちらは印象的なハンドだけを選んで記録したもので、頻度の母数には使えない） / WTSD ${(hs.wtsd * 100).toFixed(0)}%
 オールイン関与 ${(hs.allinRate * 100).toFixed(0)}% / オールイン収支 ${r1(hs.allinNet)}BB
 
 【ポジション別】
@@ -1800,6 +1910,26 @@ const ACTIONS = {
   },
 
   heropos: (d) => { const h = currentHand(); if (h) { h.heroPos = d.p; save(); render(); } },
+
+  // ── クイック集計（1ハンド1タップ）──
+  tally: (d) => {
+    const s = DB.sessions.find(x => x.id === d.id); if (!s) return;
+    s.tally = s.tally || emptyTally();
+    s.tallyLog = s.tallyLog || [];
+    s.tally.n++; s.tally[d.k] = num(s.tally[d.k]) + 1;
+    s.tallyLog.push(d.k);
+    if (s.tallyLog.length > 2000) s.tallyLog.shift();
+    if (navigator.vibrate) navigator.vibrate(12);
+    save(); render();
+  },
+  tallyundo: (d) => {
+    const s = DB.sessions.find(x => x.id === d.id); if (!s || !(s.tallyLog || []).length) return;
+    const k = s.tallyLog.pop();
+    s.tally.n = Math.max(0, s.tally.n - 1);
+    s.tally[k] = Math.max(0, num(s.tally[k]) - 1);
+    save(); render(); toast('取り消しました');
+  },
+  tallytoggle: () => { STATE.tallyOpen = STATE.tallyOpen === false ? true : false; render(); },
 
   // アンティ＝BB の連動トグル
   toggleante: (d, el) => {
