@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="ポーカーのハンド記録とAI分析（MTT/SNG）">
+<title>Poker Tracker — ハンド記録 & AI分析</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' fill='%233fb950'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<style>:root{
+  --bg:#0d1117; --bg2:#161b22; --bg3:#1e252e; --line:#2b3440;
+  --fg:#e6edf3; --fg2:#9aa7b4; --fg3:#6b7785;
+  --accent:#3fb950; --accent2:#2ea043;
+  --red:#f85149; --blue:#58a6ff; --gold:#d29922; --purple:#a371f7;
+  --r:12px; --safe: env(safe-area-inset-bottom, 0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Segoe UI",Roboto,sans-serif;
+  font-size:15px; line-height:1.55; overscroll-behavior-y:contain;
+}
+button,input,select,textarea{font-family:inherit;font-size:16px;color:inherit}
+a{color:var(--blue)}
+
+/* layout */
+#appbar{
+  position:sticky;top:0;z-index:50;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:12px 14px;
+}
+#appbar h1{font-size:17px;margin:0;font-weight:700;flex:1;letter-spacing:.02em}
+#appbar .sub{font-size:11px;color:var(--fg3);font-weight:400;display:block;margin-top:1px}
+.iconbtn{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer}
+main{padding:14px 14px calc(90px + var(--safe));max-width:760px;margin:0 auto}
+.view{display:none}
+.view.on{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+nav#tabs{
+  position:fixed;left:0;right:0;bottom:0;z-index:60;display:flex;
+  background:rgba(22,27,34,.97);backdrop-filter:blur(12px);border-top:1px solid var(--line);
+  padding-bottom:var(--safe);
+}
+nav#tabs button{
+  flex:1;background:none;border:0;color:var(--fg3);padding:9px 2px 8px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;
+}
+nav#tabs button .ic{font-size:19px;line-height:1}
+nav#tabs button.on{color:var(--accent)}
+
+/* cards / blocks */
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.card h2,.card h3{margin:0 0 10px;font-size:14px;letter-spacing:.03em;color:var(--fg2);font-weight:600}
+.row{display:flex;gap:8px;align-items:center}
+.row.wrap{flex-wrap:wrap}
+.spread{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.muted{color:var(--fg3)}
+.small{font-size:12px}
+.tiny{font-size:11px}
+hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+
+label.f{display:block;margin-bottom:10px}
+label.f>span{display:block;font-size:11px;color:var(--fg3);margin-bottom:4px;letter-spacing:.04em}
+input[type=text],input[type=number],input[type=date],input[type=password],select,textarea{
+  width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:9px;padding:9px 11px;outline:none;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{min-height:70px;resize:vertical;line-height:1.5}
+
+.btn{background:var(--accent2);border:0;color:#fff;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer;font-size:15px}
+.btn:active{opacity:.8}
+.btn.ghost{background:var(--bg3);border:1px solid var(--line);color:var(--fg);font-weight:600}
+.btn.danger{background:transparent;border:1px solid var(--red);color:var(--red);font-weight:600}
+.btn.full{width:100%}
+.grid2>.btn{font-size:14px;padding:11px 8px;white-space:nowrap}
+.btn.sm{padding:7px 12px;font-size:13px;border-radius:9px}
+.btn:disabled{opacity:.45;cursor:default}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--bg3);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer;user-select:none}
+.chip.on{background:var(--accent2);border-color:var(--accent);color:#fff;font-weight:700}
+.chip.hero{border-color:var(--gold);color:var(--gold)}
+
+.stat{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+.stat .v{font-size:19px;font-weight:800;letter-spacing:-.02em}
+.stat .k{font-size:10px;color:var(--fg3);margin-top:2px;letter-spacing:.04em}
+.pos{color:var(--accent)} .neg{color:var(--red)}
+
+.item{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:12px;margin-bottom:9px;cursor:pointer}
+.item:active{border-color:var(--accent)}
+.badge{display:inline-block;background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:11px;color:var(--fg2)}
+.badge.g{border-color:var(--accent);color:var(--accent)}
+.badge.r{border-color:var(--red);color:var(--red)}
+.badge.b{border-color:var(--blue);color:var(--blue)}
+.badge.p{border-color:var(--purple);color:var(--purple)}
+
+/* playing cards */
+.pc{
+  display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  width:34px;height:46px;border-radius:6px;background:#fbfbfb;color:#111;font-weight:800;
+  font-size:17px;line-height:1;border:1px solid #d0d0d0;box-shadow:0 1px 3px rgba(0,0,0,.4);
+}
+.pc .s{font-size:13px;margin-top:1px}
+.pc.s-h,.pc.s-d{color:#d1242f}
+.pc.s-s,.pc.s-c{color:#101418}
+.pc.empty{background:transparent;border:1px dashed var(--line);color:var(--fg3);box-shadow:none;font-size:18px;font-weight:400}
+.pc.sm2{width:26px;height:35px;font-size:13px}
+.pc.sm2 .s{font-size:10px}
+.cardrow{display:flex;gap:5px;align-items:center}
+
+/* card picker */
+.pickgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.pickgrid .pc{width:100%;height:42px;cursor:pointer}
+.pickgrid .pc.used{opacity:.25}
+.suittabs{display:flex;gap:6px;margin-bottom:10px}
+.suittabs button{flex:1;background:var(--bg3);border:1px solid var(--line);border-radius:9px;padding:9px;font-size:19px;cursor:pointer}
+.suittabs button.on{border-color:var(--accent);background:#132018}
+.suittabs button.rd{color:#f06a70}
+
+/* modal */
+#modal{position:fixed;inset:0;z-index:200;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.6)}
+#modal.on{display:flex}
+#modal .sheet{
+  background:var(--bg2);border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;
+  width:100%;max-width:760px;max-height:92vh;overflow:auto;padding:16px 14px calc(20px + var(--safe));
+  animation:up .2s ease;
+}
+@keyframes up{from{transform:translateY(20px);opacity:.5}to{transform:none;opacity:1}}
+#modal h3{margin:0 0 12px;font-size:16px}
+
+/* street block */
+.street{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--bg3)}
+.street>.hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.street>.hd b{font-size:12px;letter-spacing:.08em;color:var(--fg2)}
+.act{display:flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin-bottom:5px;font-size:13px}
+.act .who{font-weight:700;min-width:52px}
+.act .who.hero{color:var(--gold)}
+.act .x{margin-left:auto;color:var(--fg3);cursor:pointer;padding:0 4px;font-size:16px}
+.act .amt{color:var(--blue);font-weight:600}
+
+.aibox{background:#10171f;border:1px solid #24313f;border-left:3px solid var(--purple);border-radius:8px;padding:12px;white-space:pre-wrap;font-size:13.5px;line-height:1.7}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.empty-state{text-align:center;color:var(--fg3);padding:34px 10px;font-size:13px}
+.bar{height:7px;background:var(--bg3);border-radius:4px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent)}
+table.t{width:100%;border-collapse:collapse;font-size:12.5px}
+table.t th,table.t td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right}
+table.t th:first-child,table.t td:first-child{text-align:left}
+table.t th{color:var(--fg3);font-weight:600;font-size:11px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:100px;background:var(--bg3);border:1px solid var(--accent);
+  color:var(--fg);padding:10px 18px;border-radius:999px;z-index:300;font-size:13px;animation:fade .2s}
+</style>
+</head>
+<body>
+<header id="appbar">
+  <span style="font-size:20px">♠</span>
+  <h1 id="apptitle">Poker Tracker</h1>
+  <button class="iconbtn" data-a="newsession">＋</button>
+</header>
+
+<main id="app"></main>
+
+<nav id="tabs">
+  <button data-v="dash" class="on"><span class="ic">📊</span>ホーム</button>
+  <button data-v="sessions"><span class="ic">🏆</span>大会</button>
+  <button data-v="hands"><span class="ic">🃏</span>ハンド</button>
+  <button data-v="stats"><span class="ic">🤖</span>分析</button>
+  <button data-v="settings"><span class="ic">⚙️</span>設定</button>
+</nav>
+
+<div id="modal"><div class="sheet"></div></div>
+
+<script>/* ===========================================================
+   Poker Tracker MTT — core (store / utils / cards / positions)
+   =========================================================== */
+'use strict';
+
+const KEY = 'pokerlog_mtt_v1';
+const DEFAULTS = {
+  v: 1,
+  settings: {
+    provider: 'anthropic',
+    apiKey: '',
+    model: 'claude-sonnet-4-5',
+    currency: '円',
+    coach: 'balanced',
+    heroName: ''
+  },
+  sessions: [],
+  hands: []
+};
+
+let DB = load();
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return structuredClone(DEFAULTS);
+    const d = JSON.parse(raw);
+    return Object.assign(structuredClone(DEFAULTS), d, {
+      settings: Object.assign({}, DEFAULTS.settings, d.settings || {})
+    });
+  } catch (e) {
+    console.warn('load failed', e);
+    return structuredClone(DEFAULTS);
+  }
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); }
+  catch (e) { toast('保存に失敗しました（容量超過？）'); }
+}
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+/* ---------- utils ---------- */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v, d) => { const n = parseFloat(v); return isFinite(n) ? n : (d || 0); };
+const r1 = n => Math.round(n * 10) / 10;
+const fmtBB = n => (n > 0 ? '+' : '') + r1(n) + 'BB';
+const fmtMoney = n => (n > 0 ? '+' : '') + Math.round(n).toLocaleString() + DB.settings.currency;
+const sign = n => n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+}
+
+/* ---------- cards ---------- */
+const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
+const SUITS = [
+  { k: 's', sym: '♠', name: 'スペード' },
+  { k: 'h', sym: '♥', name: 'ハート' },
+  { k: 'd', sym: '♦', name: 'ダイヤ' },
+  { k: 'c', sym: '♣', name: 'クラブ' }
+];
+const suitSym = k => (SUITS.find(s => s.k === k) || {}).sym || '';
+
+function cardHTML(c, cls) {
+  cls = cls || '';
+  if (!c) return `<span class="pc empty ${cls}">+</span>`;
+  const r = c[0], s = c[1];
+  return `<span class="pc s-${s} ${cls}">${r}<span class="s">${suitSym(s)}</span></span>`;
+}
+function cardsHTML(arr, n, cls) {
+  arr = arr || [];
+  let out = '';
+  const len = n || arr.length;
+  for (let i = 0; i < len; i++) out += cardHTML(arr[i], cls);
+  return out;
+}
+// 'As' -> 'A♠' for prompts
+const cardTxt = c => c ? c[0] + suitSym(c[1]) : '?';
+const cardsTxt = a => (a || []).filter(Boolean).map(cardTxt).join(' ') || '-';
+
+/* ---------- positions ---------- */
+const POS_TABLE = {
+  9: ['UTG', 'UTG+1', 'MP', 'MP+1', 'HJ', 'CO', 'BTN', 'SB', 'BB'],
+  8: ['UTG', 'UTG+1', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB'],
+  7: ['UTG', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB'],
+  6: ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB'],
+  5: ['MP', 'CO', 'BTN', 'SB', 'BB'],
+  4: ['CO', 'BTN', 'SB', 'BB'],
+  3: ['BTN', 'SB', 'BB'],
+  2: ['BTN/SB', 'BB']
+};
+const positions = n => POS_TABLE[n] || POS_TABLE[9];
+
+const ACTS = [
+  { k: 'fold', ja: 'フォールド', en: 'folds', amt: false },
+  { k: 'check', ja: 'チェック', en: 'checks', amt: false },
+  { k: 'call', ja: 'コール', en: 'calls', amt: true },
+  { k: 'bet', ja: 'ベット', en: 'bets', amt: true },
+  { k: 'raise', ja: 'レイズ', en: 'raises to', amt: true },
+  { k: 'allin', ja: 'オールイン', en: 'all-in', amt: true }
+];
+const actJa = k => (ACTS.find(a => a.k === k) || {}).ja || k;
+const actEn = k => (ACTS.find(a => a.k === k) || {}).en || k;
+
+const STREETS = [
+  { k: 'pre', ja: 'プリフロップ', en: 'PREFLOP', cards: 0 },
+  { k: 'flop', ja: 'フロップ', en: 'FLOP', cards: 3 },
+  { k: 'turn', ja: 'ターン', en: 'TURN', cards: 1 },
+  { k: 'river', ja: 'リバー', en: 'RIVER', cards: 1 }
+];
+
+/* ---------- hand helpers ---------- */
+function newHand(sessionId) {
+  const s = DB.sessions.find(x => x.id === sessionId) || {};
+  const last = DB.hands.filter(h => h.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt)[0];
+  return {
+    id: uid(),
+    sessionId: sessionId,
+    createdAt: Date.now(),
+    level: last ? Object.assign({}, last.level) : { sb: 100, bb: 200, ante: 200 },
+    tableSize: last ? last.tableSize : (s.tableSize || 9),
+    heroPos: 'BTN',
+    heroBB: last ? last.heroBB : 40,
+    effBB: last ? last.effBB : 40,
+    playersIn: 0,
+    cards: { hero: [], flop: [], turn: [], river: [] },
+    streets: { pre: [], flop: [], turn: [], river: [] },
+    result: 0,
+    showdown: false,
+    villains: [],
+    tags: [],
+    memo: '',
+    ai: null
+  };
+}
+
+/** ハンド中のヒーローの全アクション */
+function heroActs(h, st) {
+  return (h.streets[st] || []).filter(a => a.hero);
+}
+function sawStreet(h, st) {
+  return (h.streets[st] || []).length > 0 || (st === 'flop' && h.cards.flop.filter(Boolean).length === 3);
+}
+/** 自発的にチップを入れたか（VPIP） */
+function isVPIP(h) {
+  return heroActs(h, 'pre').some(a => ['call', 'bet', 'raise', 'allin'].includes(a.act));
+}
+function isPFR(h) {
+  return heroActs(h, 'pre').some(a => ['raise', 'allin'].includes(a.act) || (a.act === 'bet'));
+}
+/** プリフロップでヒーローが3bet以上を打ったか */
+function is3BetPlus(h) {
+  const pre = h.streets.pre || [];
+  let aggr = 0;
+  for (const a of pre) {
+    if (['raise', 'bet', 'allin'].includes(a.act)) {
+      aggr++;
+      if (a.hero && aggr >= 2) return true;  // BBのポストを除き、2回目以降の攻撃＝3bet相当
+    }
+  }
+  return false;
+}
+function heroAllin(h) {
+  return Object.keys(h.streets).some(k => heroActs(h, k).some(a => a.act === 'allin'));
+}
+
+/** アンティ合計（BB単位） */
+function anteBB(h) {
+  const bbU = h.level.bb || 1;
+  if (!h.level.ante) return 0;
+  const a = h.level.ante / bbU;
+  const players = h.playersIn || h.tableSize || 9;
+  return h.anteType === 'each' ? r1(a * players) : r1(a);
+}
+
+/**
+ * ポットサイズ（BB単位）。金額は各ストリートの「合計投入額(to)」で入力される前提。
+ * upto を渡すとそのストリート終了時点まで。
+ */
+function potBB(h, upto) {
+  const order = ['pre', 'flop', 'turn', 'river'];
+  const stop = upto ? order.indexOf(upto) : 3;
+  let pot = anteBB(h);
+  for (let i = 0; i <= stop && i >= 0; i++) {
+    const st = order[i];
+    const contrib = {};
+    if (st === 'pre') {
+      const ps = positions(h.tableSize);
+      if (ps.includes('SB')) contrib['SB'] = 0.5;
+      if (ps.includes('BTN/SB')) contrib['BTN/SB'] = 0.5;
+      contrib['BB'] = 1;
+    }
+    for (const a of (h.streets[st] || [])) {
+      if (a.act === 'fold' || a.act === 'check') continue;
+      const v = num(a.amt);
+      contrib[a.pos] = Math.max(contrib[a.pos] || 0, v);
+    }
+    pot += Object.values(contrib).reduce((x, y) => x + y, 0);
+  }
+  return r1(pot);
+}
+
+/** そのストリート開始時点のポット（ベットサイズ提案用） */
+const potBefore = (h, st) => {
+  const order = ['pre', 'flop', 'turn', 'river'];
+  const i = order.indexOf(st);
+  return i <= 0 ? anteBB(h) + 1.5 : potBB(h, order[i - 1]);
+};
+
+
+/* ===========================================================
+   統計計算
+   =========================================================== */
+
+function sessionCost(s) {
+  return num(s.buyin) + num(s.fee) + num(s.rebuyCost) + num(s.addonCost);
+}
+function sessionProfit(s) {
+  return num(s.prize) - sessionCost(s);
+}
+function sessionStats(list) {
+  list = list || DB.sessions;
+  const n = list.length;
+  const cost = list.reduce((a, s) => a + sessionCost(s), 0);
+  const prize = list.reduce((a, s) => a + num(s.prize), 0);
+  const profit = prize - cost;
+  const itm = list.filter(s => num(s.prize) > 0).length;
+  const fin = list.filter(s => num(s.finish) > 0 && num(s.entrants) > 0);
+  const avgPct = fin.length ? fin.reduce((a, s) => a + num(s.finish) / num(s.entrants), 0) / fin.length : 0;
+  const cashes = list.filter(s => num(s.prize) > 0);
+  const best = list.reduce((a, s) => Math.max(a, sessionProfit(s)), -Infinity);
+  const worst = list.reduce((a, s) => Math.min(a, sessionProfit(s)), Infinity);
+  return {
+    n, cost, prize, profit,
+    roi: cost ? profit / cost : 0,
+    itmRate: n ? itm / n : 0,
+    itm,
+    avgFinishPct: avgPct,
+    avgCash: cashes.length ? prize / cashes.length : 0,
+    best: isFinite(best) ? best : 0,
+    worst: isFinite(worst) ? worst : 0,
+    avgBuyin: n ? cost / n : 0
+  };
+}
+
+function handStats(list) {
+  list = list || DB.hands;
+  const n = list.length;
+  if (!n) return { n: 0 };
+  const vpip = list.filter(isVPIP).length;
+  const pfr = list.filter(isPFR).length;
+  const tb = list.filter(is3BetPlus).length;
+  const flopSeen = list.filter(h => h.cards.flop.filter(Boolean).length === 3);
+  const sd = list.filter(h => h.showdown);
+  const won = list.filter(h => num(h.result) > 0).length;
+  const net = list.reduce((a, h) => a + num(h.result), 0);
+  const ai = list.filter(heroAllin);
+  const byPos = {};
+  for (const h of list) {
+    const p = h.heroPos || '?';
+    byPos[p] = byPos[p] || { n: 0, net: 0, vpip: 0, win: 0 };
+    byPos[p].n++;
+    byPos[p].net += num(h.result);
+    if (isVPIP(h)) byPos[p].vpip++;
+    if (num(h.result) > 0) byPos[p].win++;
+  }
+  return {
+    n, net,
+    vpip: vpip / n, pfr: pfr / n, threeBet: tb / n,
+    flopRate: flopSeen.length / n,
+    wtsd: flopSeen.length ? sd.length / flopSeen.length : 0,
+    winRate: won / n,
+    allinRate: ai.length / n,
+    allinNet: ai.reduce((a, h) => a + num(h.result), 0),
+    byPos
+  };
+}
+
+/** 累積損益グラフ用SVG */
+function lineChart(values, w, h) {
+  w = w || 320; h = h || 110;
+  if (!values.length) return '<div class="empty-state">データなし</div>';
+  const cum = []; let s = 0;
+  for (const v of values) { s += v; cum.push(s); }
+  const min = Math.min(0, ...cum), max = Math.max(0, ...cum);
+  const span = (max - min) || 1;
+  const px = i => values.length === 1 ? w / 2 : (i / (values.length - 1)) * (w - 8) + 4;
+  const py = v => h - 6 - ((v - min) / span) * (h - 14);
+  const pts = cum.map((v, i) => px(i) + ',' + py(v)).join(' ');
+  const zero = py(0);
+  const last = cum[cum.length - 1];
+  const col = last >= 0 ? 'var(--accent)' : 'var(--red)';
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
+    <line x1="0" y1="${zero}" x2="${w}" y2="${zero}" stroke="#2b3440" stroke-width="1" stroke-dasharray="3 3"/>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${px(cum.length - 1)}" cy="${py(last)}" r="3.5" fill="${col}"/>
+  </svg>`;
+}
+
+function barChart(rows, fmt) {
+  if (!rows.length) return '<div class="empty-state">データなし</div>';
+  const max = Math.max(...rows.map(r => Math.abs(r.v)), 1);
+  return rows.map(r => {
+    const pct = Math.abs(r.v) / max * 100;
+    const col = r.v >= 0 ? 'var(--accent)' : 'var(--red)';
+    return `<div style="margin-bottom:7px">
+      <div class="spread tiny"><span>${esc(r.k)}<span class="muted"> ${r.sub || ''}</span></span>
+        <span class="${sign(r.v)}">${fmt ? fmt(r.v) : r1(r.v)}</span></div>
+      <div class="bar"><i style="width:${pct}%;background:${col}"></i></div>
+    </div>`;
+  }).join('');
+}
+
+
+/* ===========================================================
+   ルーター & 各画面
+   =========================================================== */
+const STATE = { view: 'dash', sessionId: null, handId: null };
+
+function go(view, opts) {
+  Object.assign(STATE, { view }, opts || {});
+  render();
+  window.scrollTo(0, 0);
+}
+
+function render() {
+  $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === STATE.view));
+  const v = STATE.view;
+  const el = $('#app');
+  if (v === 'dash') el.innerHTML = viewDash();
+  else if (v === 'sessions') el.innerHTML = viewSessions();
+  else if (v === 'session') el.innerHTML = viewSession();
+  else if (v === 'hands') el.innerHTML = viewHands();
+  else if (v === 'stats') el.innerHTML = viewStats();
+  else if (v === 'settings') el.innerHTML = viewSettings();
+  else if (v === 'hand') el.innerHTML = viewHand();
+  bindView();
+}
+
+function title(t, sub) {
+  $('#apptitle').innerHTML = esc(t) + (sub ? `<span class="sub">${esc(sub)}</span>` : '');
+}
+
+/* ---------------- ダッシュボード ---------------- */
+function viewDash() {
+  title('Poker Tracker', 'MTT / SNG ハンドロガー');
+  const ss = sessionStats();
+  const hs = handStats();
+  const sorted = DB.sessions.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const chart = lineChart(sorted.map(sessionProfit));
+  const recent = DB.sessions.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 4);
+
+  return `
+  <div class="card">
+    <div class="spread" style="margin-bottom:10px">
+      <h2 style="margin:0">通算成績</h2>
+      <span class="badge">${ss.n} トーナメント</span>
+    </div>
+    <div style="font-size:30px;font-weight:800;letter-spacing:-.03em" class="${sign(ss.profit)}">${fmtMoney(ss.profit)}</div>
+    <div class="tiny muted" style="margin-bottom:12px">投資 ${Math.round(ss.cost).toLocaleString()}${DB.settings.currency} / 回収 ${Math.round(ss.prize).toLocaleString()}${DB.settings.currency}</div>
+    ${chart}
+    <div class="grid3" style="margin-top:12px">
+      <div class="stat"><div class="v ${sign(ss.roi)}">${(ss.roi * 100).toFixed(0)}%</div><div class="k">ROI</div></div>
+      <div class="stat"><div class="v">${(ss.itmRate * 100).toFixed(0)}%</div><div class="k">ITM率</div></div>
+      <div class="stat"><div class="v">${ss.avgFinishPct ? (ss.avgFinishPct * 100).toFixed(0) + '%' : '-'}</div><div class="k">平均順位率</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>ハンド統計 <span class="muted tiny">(${hs.n || 0} ハンド)</span></h2>
+    ${hs.n ? `
+    <div class="grid3">
+      <div class="stat"><div class="v">${(hs.vpip * 100).toFixed(0)}</div><div class="k">VPIP %</div></div>
+      <div class="stat"><div class="v">${(hs.pfr * 100).toFixed(0)}</div><div class="k">PFR %</div></div>
+      <div class="stat"><div class="v">${(hs.threeBet * 100).toFixed(0)}</div><div class="k">3BET+ %</div></div>
+    </div>
+    <div class="grid3" style="margin-top:8px">
+      <div class="stat"><div class="v">${(hs.wtsd * 100).toFixed(0)}</div><div class="k">WTSD %</div></div>
+      <div class="stat"><div class="v">${(hs.allinRate * 100).toFixed(0)}</div><div class="k">オールイン率</div></div>
+      <div class="stat"><div class="v ${sign(hs.net)}">${r1(hs.net)}</div><div class="k">記録BB収支</div></div>
+    </div>` : `<div class="empty-state">ハンドを記録すると統計が出ます</div>`}
+  </div>
+
+  <button class="btn full" data-a="newsession">＋ 新しいトーナメントを記録</button>
+
+  ${recent.length ? `<div class="card" style="margin-top:12px">
+    <h2>最近のセッション</h2>
+    ${recent.map(sessionRow).join('')}
+  </div>` : ''}
+  `;
+}
+
+function sessionRow(s) {
+  const p = sessionProfit(s);
+  const hands = DB.hands.filter(h => h.sessionId === s.id).length;
+  return `<div class="item" data-a="open-session" data-id="${s.id}">
+    <div class="spread">
+      <div style="min-width:0">
+        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || '無題のトーナメント')}</div>
+        <div class="tiny muted">${esc(s.date || '')} ${esc(s.site || '')} ${s.finish ? `· ${s.finish}/${s.entrants || '?'}位` : ''} · ${hands}ハンド</div>
+      </div>
+      <div class="${sign(p)}" style="font-weight:800;white-space:nowrap">${fmtMoney(p)}</div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- セッション一覧 ---------------- */
+function viewSessions() {
+  title('セッション', 'トーナメント記録');
+  const list = DB.sessions.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return `
+  <button class="btn full" data-a="newsession" style="margin-bottom:12px">＋ 新しいトーナメント</button>
+  ${list.length ? list.map(sessionRow).join('') : '<div class="empty-state">まだセッションがありません</div>'}`;
+}
+
+/* ---------------- セッション詳細 ---------------- */
+function viewSession() {
+  const s = DB.sessions.find(x => x.id === STATE.sessionId);
+  if (!s) { STATE.view = 'sessions'; return viewSessions(); }
+  title(s.name || 'トーナメント', s.date || '');
+  const hands = DB.hands.filter(h => h.sessionId === s.id).sort((a, b) => b.createdAt - a.createdAt);
+  const p = sessionProfit(s);
+  const hs = handStats(hands);
+  return `
+  <div class="card">
+    <div class="spread">
+      <div>
+        <div class="tiny muted">収支</div>
+        <div style="font-size:26px;font-weight:800" class="${sign(p)}">${fmtMoney(p)}</div>
+      </div>
+      <button class="btn ghost sm" data-a="editsession" data-id="${s.id}">編集</button>
+    </div>
+    <hr>
+    <div class="grid3">
+      <div class="stat"><div class="v">${s.finish || '-'}</div><div class="k">順位</div></div>
+      <div class="stat"><div class="v">${s.entrants || '-'}</div><div class="k">参加者</div></div>
+      <div class="stat"><div class="v">${Math.round(sessionCost(s)).toLocaleString()}</div><div class="k">投資額</div></div>
+    </div>
+    ${s.notes ? `<div class="small muted" style="margin-top:10px;white-space:pre-wrap">${esc(s.notes)}</div>` : ''}
+  </div>
+
+  ${hands.length ? `<div class="card">
+    <h2>このセッションの傾向</h2>
+    <div class="grid3">
+      <div class="stat"><div class="v">${(hs.vpip * 100).toFixed(0)}</div><div class="k">VPIP %</div></div>
+      <div class="stat"><div class="v">${(hs.pfr * 100).toFixed(0)}</div><div class="k">PFR %</div></div>
+      <div class="stat"><div class="v ${sign(hs.net)}">${r1(hs.net)}</div><div class="k">BB収支</div></div>
+    </div>
+    <button class="btn ghost full sm" style="margin-top:10px" data-a="ai-session" data-id="${s.id}">🤖 このセッション全体をAI分析</button>
+    ${s.ai ? `<div class="aibox" style="margin-top:10px">${esc(s.ai.text)}</div>` : ''}
+  </div>` : ''}
+
+  <button class="btn full" data-a="newhand" data-id="${s.id}" style="margin-bottom:12px">＋ ハンドを記録</button>
+
+  <h2 class="small muted" style="margin:14px 2px 8px">ハンド (${hands.length})</h2>
+  ${hands.length ? hands.map(handRow).join('') : '<div class="empty-state">まだハンドがありません</div>'}
+  <button class="btn danger full sm" style="margin-top:20px" data-a="delsession" data-id="${s.id}">このセッションを削除</button>
+  `;
+}
+
+function handRow(h) {
+  const s = DB.sessions.find(x => x.id === h.sessionId);
+  const res = num(h.result);
+  return `<div class="item" data-a="open-hand" data-id="${h.id}">
+    <div class="spread">
+      <div class="cardrow">${cardsHTML(h.cards.hero, 2, 'sm2')}</div>
+      <div style="flex:1;min-width:0;padding-left:4px">
+        <div class="small"><span class="badge b">${esc(h.heroPos)}</span> <span class="muted tiny">${r1(h.effBB)}BB eff</span></div>
+        <div class="tiny muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${h.cards.flop.filter(Boolean).length ? cardsTxt(h.cards.flop.concat(h.cards.turn, h.cards.river)) : 'プリフロップ'}
+          ${s && STATE.view !== 'session' ? ' · ' + esc(s.name || '') : ''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div class="${sign(res)}" style="font-weight:800">${fmtBB(res)}</div>
+        ${h.ai ? '<span class="badge p tiny">AI</span>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- ハンド一覧 ---------------- */
+function viewHands() {
+  title('ハンド', '全記録');
+  const f = STATE.filter || {};
+  let list = DB.hands.slice().sort((a, b) => b.createdAt - a.createdAt);
+  if (f.pos) list = list.filter(h => h.heroPos === f.pos);
+  if (f.lose) list = list.filter(h => num(h.result) < 0);
+  if (f.ai) list = list.filter(h => h.ai);
+  const allPos = Array.from(new Set(DB.hands.map(h => h.heroPos)));
+  return `
+  <div class="card">
+    <div class="chips">
+      <span class="chip ${!f.pos && !f.lose && !f.ai ? 'on' : ''}" data-a="filter" data-f="">全て</span>
+      <span class="chip ${f.lose ? 'on' : ''}" data-a="filter" data-f="lose">負けハンド</span>
+      <span class="chip ${f.ai ? 'on' : ''}" data-a="filter" data-f="ai">AI分析済</span>
+      ${allPos.map(p => `<span class="chip ${f.pos === p ? 'on' : ''}" data-a="filter" data-f="pos:${p}">${esc(p)}</span>`).join('')}
+    </div>
+  </div>
+  ${list.length ? list.map(handRow).join('') : '<div class="empty-state">該当するハンドがありません</div>'}`;
+}
+
+/* ---------------- 分析 ---------------- */
+function viewStats() {
+  title('分析', '統計とAIレビュー');
+  const hs = handStats();
+  const ss = sessionStats();
+  if (!DB.hands.length && !DB.sessions.length)
+    return '<div class="empty-state">まずセッションとハンドを記録してください</div>';
+
+  const posRows = Object.entries(hs.byPos || {})
+    .sort((a, b) => b[1].n - a[1].n)
+    .map(([k, v]) => ({ k, v: v.net, sub: `${v.n}h` }));
+
+  const sorted = DB.sessions.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  return `
+  <div class="card">
+    <h2>トーナメント収支推移</h2>
+    ${lineChart(sorted.map(sessionProfit), 320, 130)}
+    <table class="t" style="margin-top:10px">
+      <tr><th>項目</th><th>値</th></tr>
+      <tr><td>参加数</td><td>${ss.n}</td></tr>
+      <tr><td>ROI</td><td class="${sign(ss.roi)}">${(ss.roi * 100).toFixed(1)}%</td></tr>
+      <tr><td>ITM率</td><td>${(ss.itmRate * 100).toFixed(1)}% (${ss.itm})</td></tr>
+      <tr><td>平均バイイン</td><td>${Math.round(ss.avgBuyin).toLocaleString()}</td></tr>
+      <tr><td>平均入賞額</td><td>${Math.round(ss.avgCash).toLocaleString()}</td></tr>
+      <tr><td>ベスト / ワースト</td><td><span class="pos">${fmtMoney(ss.best)}</span> / <span class="neg">${fmtMoney(ss.worst)}</span></td></tr>
+    </table>
+  </div>
+
+  ${hs.n ? `
+  <div class="card">
+    <h2>ポジション別 BB収支</h2>
+    ${barChart(posRows, v => fmtBB(v))}
+  </div>
+
+  <div class="card">
+    <h2>プレイスタイル指標</h2>
+    <table class="t">
+      <tr><th>指標</th><th>値</th><th>一般的な目安</th></tr>
+      <tr><td>VPIP</td><td>${(hs.vpip * 100).toFixed(1)}%</td><td class="muted">20-28%</td></tr>
+      <tr><td>PFR</td><td>${(hs.pfr * 100).toFixed(1)}%</td><td class="muted">16-24%</td></tr>
+      <tr><td>3BET+</td><td>${(hs.threeBet * 100).toFixed(1)}%</td><td class="muted">6-11%</td></tr>
+      <tr><td>WTSD</td><td>${(hs.wtsd * 100).toFixed(1)}%</td><td class="muted">24-32%</td></tr>
+      <tr><td>オールイン関与</td><td>${(hs.allinRate * 100).toFixed(1)}%</td><td class="muted">-</td></tr>
+      <tr><td>オールイン収支</td><td class="${sign(hs.allinNet)}">${fmtBB(hs.allinNet)}</td><td class="muted">-</td></tr>
+    </table>
+    <div class="tiny muted" style="margin-top:8px">※ 記録したハンドのみが母数です。記録が偏ると数値も偏ります。</div>
+  </div>` : ''}
+
+  <div class="card">
+    <h2>AIリーク分析</h2>
+    <div class="small muted" style="margin-bottom:10px">記録済みハンド全体から、繰り返し出ているミスの傾向をAIが指摘します。</div>
+    <button class="btn full" data-a="ai-leak">🤖 全体のリークを分析する</button>
+    ${DB.leakAI ? `<div class="aibox" style="margin-top:12px">${esc(DB.leakAI.text)}</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(DB.leakAI.at)} · ${esc(DB.leakAI.model)}</div>` : ''}
+  </div>`;
+}
+
+/* ---------------- 設定 ---------------- */
+function viewSettings() {
+  title('設定', 'AI・データ管理');
+  const st = DB.settings;
+  return `
+  <div class="card">
+    <h2>AI分析の設定</h2>
+    <label class="f"><span>プロバイダ</span>
+      <select id="st-provider">
+        <option value="anthropic" ${st.provider === 'anthropic' ? 'selected' : ''}>Anthropic (Claude)</option>
+        <option value="openai" ${st.provider === 'openai' ? 'selected' : ''}>OpenAI (GPT)</option>
+        <option value="none" ${st.provider === 'none' ? 'selected' : ''}>使わない（プロンプトをコピーする）</option>
+      </select></label>
+    <label class="f"><span>APIキー（この端末のブラウザ内にのみ保存）</span>
+      <input type="password" id="st-key" value="${esc(st.apiKey)}" placeholder="sk-ant-... / sk-..." autocomplete="off"></label>
+    <label class="f"><span>モデル名</span>
+      <input type="text" id="st-model" value="${esc(st.model)}" placeholder="claude-sonnet-4-5"></label>
+    <div class="chips" style="margin:-4px 0 10px">
+      ${['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'gpt-5.1', 'gpt-4o']
+      .map(m => `<span class="chip" data-a="setmodel" data-m="${m}">${m}</span>`).join('')}
+    </div>
+    <label class="f"><span>コーチのスタイル</span>
+      <select id="st-coach">
+        <option value="balanced" ${st.coach === 'balanced' ? 'selected' : ''}>バランス型（GTO基準＋実戦調整）</option>
+        <option value="gto" ${st.coach === 'gto' ? 'selected' : ''}>理論重視（GTO/レンジ中心）</option>
+        <option value="exploit" ${st.coach === 'exploit' ? 'selected' : ''}>エクスプロイト重視（相手の傾向を突く）</option>
+        <option value="icm" ${st.coach === 'icm' ? 'selected' : ''}>ICM重視（賞金効率・バブル対応）</option>
+      </select></label>
+    <label class="f"><span>通貨単位</span>
+      <input type="text" id="st-cur" value="${esc(st.currency)}"></label>
+    <button class="btn full" data-a="savesettings">設定を保存</button>
+    <div class="tiny muted" style="margin-top:10px">
+      APIキーは外部に送信されず、この端末の localStorage にのみ保存されます。<br>
+      ※ ブラウザから直接APIを呼ぶ都合上、<b>https で公開したページ</b>から使うのが確実です（ファイルを直接開いた場合は通信が拒否されることがあります）。その場合は「プロンプトをコピー」機能をお使いください。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>データ</h2>
+    <div class="grid2">
+      <button class="btn ghost sm" data-a="export">JSONバックアップ</button>
+      <button class="btn ghost sm" data-a="exportcsv">CSV書き出し</button>
+    </div>
+    <div style="margin-top:8px">
+      <label class="f"><span>JSONを読み込む（上書き復元）</span>
+      <input type="file" id="importfile" accept="application/json"></label>
+    </div>
+    <div class="tiny muted">セッション ${DB.sessions.length} 件 / ハンド ${DB.hands.length} 件</div>
+    <hr>
+    <button class="btn danger full sm" data-a="wipe">全データを削除</button>
+  </div>
+
+  <div class="card">
+    <h2>使い方のコツ</h2>
+    <ul class="small muted" style="padding-left:18px;margin:0;line-height:1.9">
+      <li>金額は全て <b>BB（ビッグブラインド）単位</b>、レイズは「合計いくらにしたか（to）」で入力します。</li>
+      <li>迷ったハンド・大きく負けたハンドだけ記録するのが続けるコツです。</li>
+      <li>ホーム画面に追加すると、アプリのように起動できます。</li>
+    </ul>
+  </div>`;
+}
+
+
+/* ===========================================================
+   ハンド記録エディタ
+   =========================================================== */
+const DRAFT = {};   // street -> {pos, act, amt}
+
+function heroContrib(h) {
+  let t = 0;
+  for (const st of ['pre', 'flop', 'turn', 'river']) {
+    let m = 0;
+    if (st === 'pre') {
+      if (h.heroPos === 'SB' || h.heroPos === 'BTN/SB') m = 0.5;
+      if (h.heroPos === 'BB') m = 1;
+    }
+    for (const a of (h.streets[st] || [])) {
+      if (a.hero && a.act !== 'fold' && a.act !== 'check') m = Math.max(m, num(a.amt));
+    }
+    t += m;
+  }
+  return r1(t);
+}
+
+function viewHand() {
+  const h = DB.hands.find(x => x.id === STATE.handId);
+  if (!h) { STATE.view = 'hands'; return viewHands(); }
+  const s = DB.sessions.find(x => x.id === h.sessionId) || {};
+  title('ハンド編集', s.name || '');
+  const ps = positions(h.tableSize);
+  const used = allUsedCards(h);
+
+  return `
+  <div class="card">
+    <h2>状況</h2>
+    <div class="grid3">
+      <label class="f" style="margin:0"><span>SB</span><input type="number" data-k="level.sb" value="${h.level.sb}" inputmode="numeric"></label>
+      <label class="f" style="margin:0"><span>BB</span><input type="number" data-k="level.bb" value="${h.level.bb}" inputmode="numeric"></label>
+      <label class="f" style="margin:0"><span>アンティ</span><input type="number" data-k="level.ante" value="${h.level.ante}" inputmode="numeric"></label>
+    </div>
+    <div class="grid3" style="margin-top:8px">
+      <label class="f" style="margin:0"><span>テーブル人数</span>
+        <select data-k="tableSize">${[9, 8, 7, 6, 5, 4, 3, 2].map(n => `<option value="${n}" ${h.tableSize == n ? 'selected' : ''}>${n}人</option>`).join('')}</select></label>
+      <label class="f" style="margin:0"><span>自分のスタック(BB)</span><input type="number" step="0.5" data-k="heroBB" value="${h.heroBB}" inputmode="decimal"></label>
+      <label class="f" style="margin:0"><span>実効スタック(BB)</span><input type="number" step="0.5" data-k="effBB" value="${h.effBB}" inputmode="decimal"></label>
+    </div>
+    <div style="margin-top:10px">
+      <div class="tiny muted" style="margin-bottom:4px">自分のポジション</div>
+      <div class="chips">${ps.map(p => `<span class="chip ${h.heroPos === p ? 'on' : ''}" data-a="heropos" data-p="${esc(p)}">${esc(p)}</span>`).join('')}</div>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <label class="f" style="margin:0"><span>残り人数（大会全体）</span><input type="number" data-k="remaining" value="${h.remaining || ''}" placeholder="任意" inputmode="numeric"></label>
+      <label class="f" style="margin:0"><span>入賞ライン</span><input type="number" data-k="itmLine" value="${h.itmLine || ''}" placeholder="任意" inputmode="numeric"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>ホールカード</h2>
+    <div class="cardrow" data-a="pick" data-t="hero" data-n="2" style="cursor:pointer">
+      ${cardsHTML(h.cards.hero, 2)}
+      <span class="muted small" style="margin-left:8px">タップして選択</span>
+    </div>
+  </div>
+
+  ${visibleStreets(h).map(st => streetBlock(h, st, used)).join('')}
+
+  <div class="card">
+    <h2>結果</h2>
+    <div class="row" style="margin-bottom:10px">
+      <label class="f" style="flex:1;margin:0"><span>このハンドの収支 (BB)</span>
+        <input type="number" step="0.1" data-k="result" value="${h.result}" inputmode="decimal"></label>
+    </div>
+    <div class="chips" style="margin-bottom:12px">
+      <span class="chip" data-a="res-win">勝ち +${r1(potBB(h) - heroContrib(h))}BB</span>
+      <span class="chip" data-a="res-lose">負け -${heroContrib(h)}BB</span>
+      <span class="chip" data-a="res-zero">±0</span>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <label class="small"><input type="checkbox" data-k="showdown" ${h.showdown ? 'checked' : ''} style="width:auto;margin-right:6px">ショーダウンまで行った</label>
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="tiny muted" style="margin-bottom:4px">相手のハンド（分かれば）</div>
+      <div class="cardrow" data-a="pick" data-t="villain" data-n="2" style="cursor:pointer">${cardsHTML(h.villains, 2)}</div>
+    </div>
+    <label class="f"><span>メモ・自分の思考</span>
+      <textarea data-k="memo" placeholder="例：相手がタイトだと思ってブラフした／ポットオッズが合うか迷った">${esc(h.memo)}</textarea></label>
+    <div class="tiny muted">推定ポット ${potBB(h)}BB ／ 自分の投入 ${heroContrib(h)}BB</div>
+  </div>
+
+  <div class="card">
+    <h2>AI分析</h2>
+    <div class="grid2">
+      <button class="btn" data-a="ai-hand" data-id="${h.id}">🤖 このハンドを分析</button>
+      <button class="btn ghost" data-a="copyprompt" data-id="${h.id}">プロンプトをコピー</button>
+    </div>
+    <div id="ai-out" style="margin-top:12px">${h.ai ? `<div class="aibox">${esc(h.ai.text)}</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(h.ai.at)} · ${esc(h.ai.model)}</div>` : ''}</div>
+  </div>
+
+  <div class="card">
+    <h2>ハンドヒストリー</h2>
+    <pre class="tiny muted" style="white-space:pre-wrap;margin:0;font-family:ui-monospace,monospace">${esc(handHistory(h))}</pre>
+  </div>
+
+  <div class="grid2">
+    <button class="btn ghost" data-a="back-session" data-id="${h.sessionId}">セッションに戻る</button>
+    <button class="btn danger" data-a="delhand" data-id="${h.id}">このハンドを削除</button>
+  </div>`;
+}
+
+function allUsedCards(h) {
+  return [].concat(h.cards.hero, h.cards.flop, h.cards.turn, h.cards.river, h.villains || []).filter(Boolean);
+}
+
+/** 進行状況に応じて表示するストリートを絞る（画面を短く保つ） */
+function visibleStreets(h) {
+  const out = [STREETS[0], STREETS[1]];
+  const nf = h.cards.flop.filter(Boolean).length;
+  const nt = h.cards.turn.filter(Boolean).length;
+  if (nf === 3 || (h.streets.flop || []).length) out.push(STREETS[2]);
+  if (nt === 1 || (h.streets.turn || []).length) out.push(STREETS[3]);
+  return out;
+}
+
+function streetBlock(h, st, used) {
+  const acts = h.streets[st.k] || [];
+  const d = DRAFT[st.k] || {};
+  const open = !!d.open;
+  const ps = positions(h.tableSize);
+  const board = st.k === 'flop' ? h.cards.flop : st.k === 'turn' ? h.cards.turn : st.k === 'river' ? h.cards.river : null;
+  const pb = potBefore(h, st.k);
+  const quick = st.k === 'pre'
+    ? [{ l: '2.2', v: 2.2 }, { l: '2.5', v: 2.5 }, { l: '3', v: 3 }, { l: 'All-in', v: h.effBB }]
+    : [{ l: '1/3', v: r1(pb / 3) }, { l: '1/2', v: r1(pb / 2) }, { l: '2/3', v: r1(pb * 2 / 3) }, { l: 'Pot', v: r1(pb) }, { l: 'All-in', v: h.effBB }];
+
+  return `<div class="card">
+    <div class="spread" style="margin-bottom:8px">
+      <h2 style="margin:0">${st.ja}</h2>
+      <span class="tiny muted">ポット ${potBB(h, st.k)}BB</span>
+    </div>
+    ${st.cards ? `<div class="cardrow" data-a="pick" data-t="${st.k}" data-n="${st.cards}" style="cursor:pointer;margin-bottom:10px">
+        ${cardsHTML(board, st.cards)}</div>` : ''}
+    ${acts.map((a, i) => `<div class="act">
+        <span class="who ${a.hero ? 'hero' : ''}">${esc(a.pos)}</span>
+        <span>${actJa(a.act)}</span>
+        ${a.amt ? `<span class="amt">${r1(a.amt)}BB</span>` : ''}
+        <span class="x" data-a="delact" data-st="${st.k}" data-i="${i}">✕</span>
+      </div>`).join('')}
+    ${open ? `<div style="margin-top:8px">
+      <div class="tiny muted" style="margin-bottom:3px">① 誰が</div>
+      <div class="chips" style="margin-bottom:7px">
+        ${ps.map(p => `<span class="chip ${d.pos === p ? 'on' : ''} ${p === h.heroPos ? 'hero' : ''}" data-a="dpos" data-st="${st.k}" data-p="${esc(p)}">${esc(p)}${p === h.heroPos ? '★' : ''}</span>`).join('')}
+      </div>
+      <div class="tiny muted" style="margin-bottom:3px">② 何をした</div>
+      <div class="chips" style="margin-bottom:7px">
+        ${ACTS.map(a => `<span class="chip ${d.act === a.k ? 'on' : ''}" data-a="dact" data-st="${st.k}" data-k="${a.k}">${a.ja}</span>`).join('')}
+      </div>
+      <div class="tiny muted" style="margin-bottom:3px">③ いくら（そのストリートの合計額 = to）</div>
+      <div class="chips" style="margin-bottom:6px">${quick.map(q => `<span class="chip tiny" data-a="qamt" data-st="${st.k}" data-v="${q.v}">${q.l}<span class="muted"> ${q.v}</span></span>`).join('')}</div>
+      <div class="row">
+        <input type="number" step="0.1" inputmode="decimal" id="amt-${st.k}" placeholder="BB" value="${d.amt != null ? d.amt : ''}" style="flex:1">
+        <button class="btn sm" data-a="addact" data-st="${st.k}">追加</button>
+        <button class="btn ghost sm" data-a="closeact" data-st="${st.k}">閉じる</button>
+      </div>
+    </div>`
+      : `<button class="btn ghost sm full" style="margin-top:6px" data-a="openact" data-st="${st.k}">＋ アクションを追加</button>`}
+  </div>`;
+}
+
+/* ---------- ハンドヒストリー文字列 ---------- */
+function handHistory(h) {
+  const s = DB.sessions.find(x => x.id === h.sessionId) || {};
+  const L = [];
+  L.push(`【${s.format === 'SNG' ? 'SNG' : 'MTT'}】${s.name || ''} ${s.date || ''}`);
+  L.push(`ブラインド: ${h.level.sb}/${h.level.bb}${h.level.ante ? ' ante ' + h.level.ante : ''} / ${h.tableSize}人テーブル`);
+  L.push(`自分: ${h.heroPos} スタック ${h.heroBB}BB / 実効 ${h.effBB}BB / ハンド ${cardsTxt(h.cards.hero)}`);
+  if (h.remaining) L.push(`大会状況: 残り${h.remaining}人${h.itmLine ? '（入賞ライン ' + h.itmLine + '人）' : ''}`);
+  L.push('');
+  for (const st of STREETS) {
+    const acts = h.streets[st.k] || [];
+    let board = '';
+    if (st.k === 'flop') board = cardsTxt(h.cards.flop);
+    if (st.k === 'turn') board = cardsTxt(h.cards.turn);
+    if (st.k === 'river') board = cardsTxt(h.cards.river);
+    if (!acts.length && !(board && board !== '-')) continue;
+    L.push(`--- ${st.ja}${board && board !== '-' ? ' [' + board + ']' : ''} (ポット ${potBefore(h, st.k)}BB) ---`);
+    for (const a of acts) {
+      L.push(`${a.pos}${a.hero ? '(自分)' : ''}: ${actJa(a.act)}${a.amt ? ' ' + r1(a.amt) + 'BB' : ''}`);
+    }
+  }
+  L.push('');
+  L.push(`結果: ${h.showdown ? 'ショーダウン' : 'ショーダウンなし'} / 収支 ${fmtBB(num(h.result))}`);
+  if ((h.villains || []).filter(Boolean).length) L.push(`相手のハンド: ${cardsTxt(h.villains)}`);
+  if (h.memo) L.push(`自分のメモ: ${h.memo}`);
+  return L.join('\n');
+}
+
+/* ---------- カードピッカー ---------- */
+let PICK = null;
+function openPicker(target, n, hand) {
+  PICK = { target, n, hand, sel: [], suit: 's' };
+  const cur = target === 'hero' ? hand.cards.hero
+    : target === 'villain' ? (hand.villains || [])
+      : hand.cards[target];
+  PICK.sel = (cur || []).filter(Boolean).slice(0, n);
+  renderPicker();
+}
+function renderPicker() {
+  const h = PICK.hand;
+  const used = allUsedCards(h).filter(c => !PICK.sel.includes(c));
+  const labels = { hero: '自分のホールカード', flop: 'フロップ', turn: 'ターン', river: 'リバー', villain: '相手のハンド' };
+  const html = `
+    <h3>${labels[PICK.target]}（${PICK.n}枚）</h3>
+    <div class="cardrow" style="margin-bottom:12px;min-height:48px">${cardsHTML(PICK.sel, PICK.n)}</div>
+    <div class="suittabs">
+      ${SUITS.map(s => `<button class="${PICK.suit === s.k ? 'on' : ''} ${s.k === 'h' || s.k === 'd' ? 'rd' : ''}" data-a="suit" data-s="${s.k}">${s.sym}</button>`).join('')}
+    </div>
+    <div class="pickgrid">
+      ${RANKS.map(r => {
+    const c = r + PICK.suit;
+    const u = used.includes(c);
+    return `<span class="pc s-${PICK.suit} ${u ? 'used' : ''}" data-a="pickcard" data-c="${c}">${r}<span class="s">${suitSym(PICK.suit)}</span></span>`;
+  }).join('')}
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <button class="btn ghost" data-a="pickclear">クリア</button>
+      <button class="btn" data-a="pickdone">決定</button>
+    </div>`;
+  showModal(html);
+}
+function applyPick() {
+  const h = PICK.hand, t = PICK.target;
+  if (t === 'hero') h.cards.hero = PICK.sel.slice();
+  else if (t === 'villain') h.villains = PICK.sel.slice();
+  else h.cards[t] = PICK.sel.slice();
+  save(); closeModal(); render();
+}
+
+/* ---------- モーダル ---------- */
+function showModal(html) {
+  $('#modal .sheet').innerHTML = html;
+  $('#modal').classList.add('on');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() {
+  $('#modal').classList.remove('on');
+  document.body.style.overflow = '';
+}
+
+/* ---------- セッション編集モーダル ---------- */
+function sessionForm(s) {
+  const isNew = !s;
+  s = s || { id: uid(), date: today(), format: 'MTT', tableSize: 9, buyin: 10000, fee: 0, rebuyCost: 0, addonCost: 0, prize: 0 };
+  showModal(`
+    <h3>${isNew ? '新しいトーナメント' : 'トーナメントを編集'}</h3>
+    <input type="hidden" id="s-id" value="${s.id}">
+    <label class="f"><span>大会名</span><input type="text" id="s-name" value="${esc(s.name || '')}" placeholder="例：日曜デイリー 1万"></label>
+    <div class="grid2">
+      <label class="f"><span>日付</span><input type="date" id="s-date" value="${esc(s.date || today())}"></label>
+      <label class="f"><span>会場 / サイト</span><input type="text" id="s-site" value="${esc(s.site || '')}" placeholder="例：〇〇カジノ"></label>
+    </div>
+    <div class="grid2">
+      <label class="f"><span>形式</span><select id="s-format">
+        <option value="MTT" ${s.format === 'MTT' ? 'selected' : ''}>MTT</option>
+        <option value="SNG" ${s.format === 'SNG' ? 'selected' : ''}>SNG</option>
+      </select></label>
+      <label class="f"><span>テーブル人数</span><select id="s-table">
+        ${[9, 8, 7, 6, 5, 4, 3, 2].map(n => `<option value="${n}" ${s.tableSize == n ? 'selected' : ''}>${n}人</option>`).join('')}
+      </select></label>
+    </div>
+    <div class="grid2">
+      <label class="f"><span>バイイン</span><input type="number" id="s-buyin" value="${num(s.buyin)}" inputmode="numeric"></label>
+      <label class="f"><span>参加費・手数料</span><input type="number" id="s-fee" value="${num(s.fee)}" inputmode="numeric"></label>
+    </div>
+    <div class="grid2">
+      <label class="f"><span>リエントリー/リバイ額</span><input type="number" id="s-rebuy" value="${num(s.rebuyCost)}" inputmode="numeric"></label>
+      <label class="f"><span>アドオン額</span><input type="number" id="s-addon" value="${num(s.addonCost)}" inputmode="numeric"></label>
+    </div>
+    <div class="grid3">
+      <label class="f"><span>参加者数</span><input type="number" id="s-entrants" value="${s.entrants || ''}" inputmode="numeric"></label>
+      <label class="f"><span>順位</span><input type="number" id="s-finish" value="${s.finish || ''}" inputmode="numeric"></label>
+      <label class="f"><span>獲得賞金</span><input type="number" id="s-prize" value="${num(s.prize)}" inputmode="numeric"></label>
+    </div>
+    <label class="f"><span>メモ</span><textarea id="s-notes" placeholder="全体の感想、反省点など">${esc(s.notes || '')}</textarea></label>
+    <div class="grid2">
+      <button class="btn ghost" data-a="closemodal">キャンセル</button>
+      <button class="btn" data-a="savesession" data-new="${isNew ? 1 : 0}">保存</button>
+    </div>`);
+}
+
+function saveSessionFromForm(isNew) {
+  const id = $('#s-id').value;
+  const data = {
+    id,
+    name: $('#s-name').value.trim(),
+    date: $('#s-date').value,
+    site: $('#s-site').value.trim(),
+    format: $('#s-format').value,
+    tableSize: +$('#s-table').value,
+    buyin: num($('#s-buyin').value),
+    fee: num($('#s-fee').value),
+    rebuyCost: num($('#s-rebuy').value),
+    addonCost: num($('#s-addon').value),
+    entrants: num($('#s-entrants').value),
+    finish: num($('#s-finish').value),
+    prize: num($('#s-prize').value),
+    notes: $('#s-notes').value
+  };
+  const idx = DB.sessions.findIndex(x => x.id === id);
+  if (idx >= 0) DB.sessions[idx] = Object.assign(DB.sessions[idx], data);
+  else DB.sessions.push(Object.assign({ createdAt: Date.now() }, data));
+  save(); closeModal();
+  go('session', { sessionId: id });
+  toast('保存しました');
+}
+
+
+/* ===========================================================
+   AI分析
+   =========================================================== */
+const COACH = {
+  balanced: 'GTOの基準を土台にしつつ、実戦（ライブMTT）での相手の傾向も踏まえた現実的な推奨を出す',
+  gto: 'GTO・レンジ構成・頻度の観点を最優先し、理論的に正しい選択を明確に示す',
+  exploit: '相手プレイヤーの傾向・母集団の弱点を突くエクスプロイト戦略を最優先で提案する',
+  icm: 'ICM（賞金効率）とスタック保存を最優先に、バブル・ファイナルテーブルでの生存価値を強く考慮する'
+};
+
+function systemPrompt() {
+  return `あなたはトーナメントポーカー（NLHE MTT/SNG）専門の一流コーチです。
+方針: ${COACH[DB.settings.coach] || COACH.balanced}。
+
+回答ルール:
+- 日本語で、専門用語には短い補足をつける。
+- 前置きや挨拶は書かず、いきなり本題から始める。
+- 断定できない部分は「情報が足りない」と正直に書く。憶測でハンドレンジを捏造しない。
+- 金額は全てBB単位で扱う。スタックが浅い(20BB以下)場合はプッシュ/フォールドとICMの観点を必ず含める。
+- 最後に必ず「次に意識する1つのこと」を1文で書く。`;
+}
+
+function handPrompt(h) {
+  return `以下は私が実戦で記録した1ハンドです。各ストリートの判断を評価してください。
+
+${handHistory(h)}
+
+次の見出しで出力してください：
+【状況整理】2-3行
+【プリフロップ】妥当性と、より良い選択があれば代替案
+【フロップ以降】ストリートごとの評価（該当がなければ省略）
+【最大の改善点】1つだけ、具体的に
+【総合評価】100点満点のスコアと一言
+【次に意識する1つのこと】1文`;
+}
+
+function sessionPrompt(s) {
+  const hands = DB.hands.filter(h => h.sessionId === s.id).sort((a, b) => a.createdAt - b.createdAt);
+  const hs = handStats(hands);
+  const body = hands.slice(0, 20).map((h, i) => `■ハンド${i + 1}\n${handHistory(h)}`).join('\n\n');
+  return `以下は1つのトーナメントでの私の記録です。セッション全体を振り返ってください。
+
+【トーナメント情報】
+名称: ${s.name || '-'} / 日付: ${s.date || '-'} / 形式: ${s.format || 'MTT'}
+参加者: ${s.entrants || '?'}人 / 結果: ${s.finish || '?'}位 / 収支: ${fmtMoney(sessionProfit(s))}
+${s.notes ? '自分のメモ: ' + s.notes : ''}
+
+【記録ハンドの傾向】
+ハンド数 ${hs.n} / VPIP ${(hs.vpip * 100).toFixed(0)}% / PFR ${(hs.pfr * 100).toFixed(0)}% / 3BET+ ${(hs.threeBet * 100).toFixed(0)}% / BB収支 ${r1(hs.net)}BB
+
+${body}
+
+次の見出しで出力してください：
+【このセッションの流れ】3-4行
+【良かった判断】2つ
+【もったいなかった判断】2-3つ（該当ハンド番号を明記）
+【次回への修正点】箇条書き3つ
+【次に意識する1つのこと】1文`;
+}
+
+function leakPrompt() {
+  const hs = handStats();
+  const ss = sessionStats();
+  const hands = DB.hands.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 30);
+  const posLines = Object.entries(hs.byPos || {})
+    .map(([k, v]) => `${k}: ${v.n}ハンド, 収支${r1(v.net)}BB, VPIP ${(v.vpip / v.n * 100).toFixed(0)}%`).join('\n');
+  const body = hands.map((h, i) => `■${i + 1} ${h.heroPos} ${cardsTxt(h.cards.hero)} eff${h.effBB}BB → ${fmtBB(num(h.result))}${h.memo ? ' / メモ:' + h.memo : ''}`).join('\n');
+  return `私のポーカー記録全体から、繰り返し現れているリーク（弱点）を特定してください。
+
+【通算】
+トーナメント ${ss.n}回 / ROI ${(ss.roi * 100).toFixed(0)}% / ITM ${(ss.itmRate * 100).toFixed(0)}%
+記録ハンド ${hs.n} / VPIP ${(hs.vpip * 100).toFixed(0)}% / PFR ${(hs.pfr * 100).toFixed(0)}% / 3BET+ ${(hs.threeBet * 100).toFixed(0)}% / WTSD ${(hs.wtsd * 100).toFixed(0)}%
+オールイン関与 ${(hs.allinRate * 100).toFixed(0)}% / オールイン収支 ${r1(hs.allinNet)}BB
+
+【ポジション別】
+${posLines || '-'}
+
+【直近ハンド一覧】
+${body || '-'}
+
+次の見出しで出力してください：
+【数値から読み取れること】箇条書き3-4つ（VPIP/PFR差、ポジション偏りなど）
+【疑われるリーク】3つ。各リークに「根拠」と「修正方法」をセットで
+【今月の練習メニュー】具体的な行動3つ
+【次に意識する1つのこと】1文
+
+※ 記録ハンド数が少ない場合は、統計的に断定せず「サンプル不足」と明記してください。`;
+}
+
+/* ---------- API 呼び出し ---------- */
+async function callAI(user) {
+  const st = DB.settings;
+  if (st.provider === 'none' || !st.apiKey) {
+    throw new Error('APIキーが未設定です。設定画面でキーを入力するか、「プロンプトをコピー」でClaudeアプリに貼り付けてください。');
+  }
+  const sys = systemPrompt();
+  if (st.provider === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': st.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: st.model || 'claude-sonnet-4-5',
+        max_tokens: 2000,
+        system: sys,
+        messages: [{ role: 'user', content: user }]
+      })
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error((j.error && j.error.message) || ('APIエラー ' + res.status));
+    return (j.content || []).map(c => c.text || '').join('').trim();
+  } else {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + st.apiKey },
+      body: JSON.stringify({
+        model: st.model || 'gpt-4o',
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }]
+      })
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error((j.error && j.error.message) || ('APIエラー ' + res.status));
+    return ((j.choices || [])[0] || {}).message.content.trim();
+  }
+}
+
+async function runAI(promptText, onDone, outSel) {
+  const out = $(outSel || '#ai-out');
+  if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> AIが分析しています…</div>';
+  try {
+    const text = await callAI(promptText);
+    onDone(text);
+    toast('分析が完了しました');
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--red)">分析に失敗しました。\n${esc(msg)}\n\nヒント: ローカルファイルから直接開いている場合、ブラウザの制限でAPIを呼べません。GitHub Pagesなどhttpsで公開したページから使うか、「プロンプトをコピー」してClaudeアプリに貼り付けてください。</div>`;
+    else toast('分析に失敗: ' + msg);
+  }
+}
+
+async function copyText(t) {
+  try {
+    await navigator.clipboard.writeText(t);
+    toast('コピーしました');
+  } catch (e) {
+    showModal(`<h3>プロンプト（長押しでコピー）</h3>
+      <textarea style="min-height:300px;font-size:12px">${esc(t)}</textarea>
+      <button class="btn full" data-a="closemodal" style="margin-top:10px">閉じる</button>`);
+  }
+}
+
+
+/* ===========================================================
+   イベント / 起動
+   =========================================================== */
+function setPath(obj, path, val) {
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || {};
+  o[ks[ks.length - 1]] = val;
+}
+
+function currentHand() { return DB.hands.find(x => x.id === STATE.handId); }
+
+function bindView() {
+  // フィールド変更
+  $$('#app [data-k]').forEach(el => {
+    el.addEventListener('change', () => {
+      const h = currentHand();
+      if (!h) return;
+      const k = el.dataset.k;
+      let v;
+      if (el.type === 'checkbox') v = el.checked;
+      else if (el.type === 'number') v = num(el.value);
+      else v = el.value;
+      setPath(h, k, v);
+      if (k === 'tableSize' && !positions(v).includes(h.heroPos)) h.heroPos = positions(v)[positions(v).length - 1];
+      save();
+      if (['level.sb', 'level.bb', 'level.ante', 'tableSize', 'effBB', 'heroBB'].includes(k)) render();
+    });
+  });
+  const imp = $('#importfile');
+  if (imp) imp.addEventListener('change', importJSON);
+}
+
+const ACTIONS = {
+  newsession: () => sessionForm(null),
+  editsession: (d) => sessionForm(DB.sessions.find(x => x.id === d.id)),
+  savesession: (d) => saveSessionFromForm(d.new === '1'),
+  closemodal: () => closeModal(),
+  'open-session': (d) => go('session', { sessionId: d.id }),
+  'back-session': (d) => go('session', { sessionId: d.id }),
+  'open-hand': (d) => go('hand', { handId: d.id }),
+
+  delsession: (d) => {
+    if (!confirm('このセッションと、含まれる全ハンドを削除します。よろしいですか？')) return;
+    DB.sessions = DB.sessions.filter(x => x.id !== d.id);
+    DB.hands = DB.hands.filter(x => x.sessionId !== d.id);
+    save(); go('sessions');
+  },
+  newhand: (d) => {
+    const h = newHand(d.id);
+    DB.hands.push(h); save();
+    go('hand', { handId: h.id });
+  },
+  delhand: (d) => {
+    if (!confirm('このハンドを削除しますか？')) return;
+    const h = DB.hands.find(x => x.id === d.id);
+    const sid = h && h.sessionId;
+    DB.hands = DB.hands.filter(x => x.id !== d.id);
+    save(); go('session', { sessionId: sid });
+  },
+
+  heropos: (d) => { const h = currentHand(); if (h) { h.heroPos = d.p; save(); render(); } },
+
+  // カード
+  pick: (d) => { const h = currentHand(); if (h) openPicker(d.t, +d.n, h); },
+  suit: (d) => { PICK.suit = d.s; renderPicker(); },
+  pickcard: (d) => {
+    const c = d.c;
+    const i = PICK.sel.indexOf(c);
+    if (i >= 0) PICK.sel.splice(i, 1);
+    else {
+      if (allUsedCards(PICK.hand).includes(c) && !PICK.sel.includes(c)) { toast('このカードは既に使用されています'); return; }
+      if (PICK.sel.length >= PICK.n) PICK.sel.shift();
+      PICK.sel.push(c);
+    }
+    if (PICK.sel.length === PICK.n) { applyPick(); return; }
+    renderPicker();
+  },
+  pickclear: () => { PICK.sel = []; renderPicker(); },
+  pickdone: () => applyPick(),
+
+  // アクション入力
+  openact: (d) => { DRAFT[d.st] = Object.assign({ pos: null, act: null, amt: null }, DRAFT[d.st], { open: true }); render(); },
+  closeact: (d) => { DRAFT[d.st] = { open: false }; render(); },
+  dpos: (d) => { DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { pos: d.p }); render(); },
+  dact: (d) => {
+    const cur = Object.assign({}, DRAFT[d.st], { act: d.k });
+    DRAFT[d.st] = cur;
+    if (d.k === 'fold' || d.k === 'check') { addAction(d.st); return; }
+    render();
+    const el = $('#amt-' + d.st); if (el) el.focus();
+  },
+  qamt: (d) => {
+    const el = $('#amt-' + d.st);
+    if (el) el.value = d.v;
+    DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { amt: +d.v });
+    if (DRAFT[d.st].act) addAction(d.st);
+  },
+  addact: (d) => addAction(d.st),
+  delact: (d) => {
+    const h = currentHand(); if (!h) return;
+    h.streets[d.st].splice(+d.i, 1); save(); render();
+  },
+
+  // 結果クイック
+  'res-win': () => { const h = currentHand(); h.result = r1(potBB(h) - heroContrib(h)); save(); render(); },
+  'res-lose': () => { const h = currentHand(); h.result = -heroContrib(h); save(); render(); },
+  'res-zero': () => { const h = currentHand(); h.result = 0; save(); render(); },
+
+  // AI
+  'ai-hand': (d) => {
+    const h = DB.hands.find(x => x.id === d.id);
+    runAI(handPrompt(h), (text) => {
+      h.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+      save(); render();
+    });
+  },
+  'ai-session': (d) => {
+    const s = DB.sessions.find(x => x.id === d.id);
+    runAI(sessionPrompt(s), (text) => {
+      s.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+      save(); render();
+    }, '#app');
+  },
+  'ai-leak': () => {
+    runAI(leakPrompt(), (text) => {
+      DB.leakAI = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+      save(); render();
+    }, '#app');
+  },
+  copyprompt: (d) => {
+    const h = DB.hands.find(x => x.id === d.id);
+    copyText(systemPrompt() + '\n\n---\n\n' + handPrompt(h));
+  },
+
+  // フィルタ
+  filter: (d) => {
+    const f = d.f || '';
+    if (!f) STATE.filter = {};
+    else if (f.startsWith('pos:')) STATE.filter = { pos: f.slice(4) };
+    else STATE.filter = { [f]: true };
+    render();
+  },
+
+  // 設定
+  setmodel: (d) => { $('#st-model').value = d.m; },
+  savesettings: () => {
+    DB.settings.provider = $('#st-provider').value;
+    DB.settings.apiKey = $('#st-key').value.trim();
+    DB.settings.model = $('#st-model').value.trim();
+    DB.settings.coach = $('#st-coach').value;
+    DB.settings.currency = $('#st-cur').value || '円';
+    save(); toast('設定を保存しました'); render();
+  },
+  export: () => {
+    const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+    dl(blob, 'pokerlog-' + today() + '.json');
+  },
+  exportcsv: () => {
+    const rows = [['date', 'session', 'pos', 'hole', 'effBB', 'flop', 'turn', 'river', 'resultBB', 'showdown', 'memo']];
+    for (const h of DB.hands) {
+      const s = DB.sessions.find(x => x.id === h.sessionId) || {};
+      rows.push([s.date || '', s.name || '', h.heroPos, cardsTxt(h.cards.hero), h.effBB,
+      cardsTxt(h.cards.flop), cardsTxt(h.cards.turn), cardsTxt(h.cards.river),
+      num(h.result), h.showdown ? 'Y' : 'N', (h.memo || '').replace(/\n/g, ' ')]);
+    }
+    const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    dl(new Blob([csv], { type: 'text/csv' }), 'pokerlog-hands-' + today() + '.csv');
+  },
+  wipe: () => {
+    if (!confirm('全てのデータを削除します。元に戻せません。よろしいですか？')) return;
+    DB = structuredClone(DEFAULTS); save(); go('dash'); toast('削除しました');
+  }
+};
+
+function addAction(st) {
+  const h = currentHand(); if (!h) return;
+  const d = DRAFT[st] || {};
+  const el = $('#amt-' + st);
+  const amt = el ? num(el.value) : num(d.amt);
+  if (!d.pos) { toast('ポジションを選んでください'); return; }
+  if (!d.act) { toast('アクションを選んでください'); return; }
+  const needsAmt = (ACTS.find(a => a.k === d.act) || {}).amt;
+  if (needsAmt && !amt) { toast('金額(BB)を入力してください'); return; }
+  h.streets[st].push({ pos: d.pos, act: d.act, amt: needsAmt ? amt : 0, hero: d.pos === h.heroPos });
+  DRAFT[st] = { pos: null, act: null, amt: null, open: true };
+  save(); render();
+}
+
+function dl(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function importJSON(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const d = JSON.parse(rd.result);
+      if (!d.sessions || !d.hands) throw new Error('形式が違います');
+      if (!confirm(`セッション${d.sessions.length}件 / ハンド${d.hands.length}件 を読み込み、現在のデータを置き換えます。`)) return;
+      DB = Object.assign(structuredClone(DEFAULTS), d);
+      DB.settings = Object.assign({}, DEFAULTS.settings, d.settings || {});
+      save(); go('dash'); toast('読み込みました');
+    } catch (err) { alert('読み込みに失敗しました: ' + err.message); }
+  };
+  rd.readAsText(f);
+}
+
+/* ---------- 起動 ---------- */
+function boot() {
+  document.addEventListener('click', ev => {
+    const t = ev.target.closest('[data-a]');
+    if (t) {
+      const fn = ACTIONS[t.dataset.a];
+      if (fn) { ev.preventDefault(); fn(t.dataset, t); }
+      return;
+    }
+    if (ev.target.id === 'modal') closeModal();
+  });
+  $$('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.v)));
+  render();
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('./sw.js').catch(() => { });
+  }
+}
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>
