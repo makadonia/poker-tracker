@@ -171,6 +171,11 @@ details summary::-webkit-details-marker{display:none}
 details summary{list-style:none}
 details summary:before{content:'▸ ';}
 details[open] summary:before{content:'▾ ';}
+
+.mdh{display:block;color:var(--accent);font-weight:800;margin:12px 0 3px;font-size:14px;letter-spacing:.02em}
+.aibox .mdh:first-child{margin-top:0}
+.aibox b{color:#fff}
+.chip.on .muted{color:rgba(255,255,255,.78)}
 </style>
 </head>
 <body>
@@ -197,7 +202,7 @@ details[open] summary:before{content:'▾ ';}
    =========================================================== */
 'use strict';
 
-const APP_VERSION = 'v1.5';
+const APP_VERSION = 'v1.7';
 const KEY = 'pokerlog_mtt_v1';
 const DEFAULTS = {
   v: 1,
@@ -207,6 +212,7 @@ const DEFAULTS = {
     model: 'claude-sonnet-5',
     currency: '円',
     coach: 'balanced',
+    usdJpy: 155,
     heroName: ''
   },
   sessions: [],
@@ -661,7 +667,8 @@ function viewSession() {
       <div class="stat"><div class="v ${sign(hs.net)}">${r1(hs.net)}</div><div class="k">BB収支</div></div>
     </div>
     <button class="btn ghost full sm" style="margin-top:10px" data-a="ai-session" data-id="${s.id}">🤖 このセッション全体をAI分析</button>
-    ${s.ai ? `<div class="aibox" style="margin-top:10px">${esc(s.ai.text)}</div>` : ''}
+    ${s.ai ? `<div class="aibox" style="margin-top:10px">${mdLite(s.ai.text)}</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(s.ai.at)} · ${esc(s.ai.model)}${s.ai.usage ? ' · ' + esc(usageLine(s.ai.usage)) : ''}</div>` : ''}
   </div>` : ''}
 
   <button class="btn full" data-a="newhand" data-id="${s.id}" style="margin-bottom:12px">＋ ハンドを記録</button>
@@ -767,8 +774,35 @@ function viewStats() {
     <h2>AIリーク分析</h2>
     <div class="small muted" style="margin-bottom:10px">記録済みハンド全体から、繰り返し出ているミスの傾向をAIが指摘します。</div>
     <button class="btn full" data-a="ai-leak">🤖 全体のリークを分析する</button>
-    ${DB.leakAI ? `<div class="aibox" style="margin-top:12px">${esc(DB.leakAI.text)}</div>
-      <div class="tiny muted" style="margin-top:6px">${esc(DB.leakAI.at)} · ${esc(DB.leakAI.model)}</div>` : ''}
+    ${DB.leakAI ? `<div class="aibox" style="margin-top:12px">${mdLite(DB.leakAI.text)}</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(DB.leakAI.at)} · ${esc(DB.leakAI.model)}${DB.leakAI.usage ? ' · ' + esc(usageLine(DB.leakAI.usage)) : ''}</div>` : ''}
+  </div>`;
+}
+
+/* ---------------- AI利用状況 ---------------- */
+function usageCard() {
+  const u = DB.usage;
+  if (!u || !u.n) return `<div class="card"><h2>AI利用状況</h2>
+    <div class="empty-state">まだAI分析を実行していません</div></div>`;
+  const m = u.months[monthKey()] || { n: 0, in: 0, out: 0, usd: 0 };
+  const rows = Object.entries(u.months).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
+  return `<div class="card">
+    <h2>AI利用状況</h2>
+    <div class="grid3">
+      <div class="stat"><div class="v">${m.n}</div><div class="k">今月の回数</div></div>
+      <div class="stat"><div class="v">${(usdToJpy(m.usd) || 0).toFixed(0)}</div><div class="k">今月の金額(円)</div></div>
+      <div class="stat"><div class="v">${(usdToJpy(u.usd) || 0).toFixed(0)}</div><div class="k">累計(円)</div></div>
+    </div>
+    <div class="tiny muted" style="margin-top:8px">
+      累計 ${u.n}回 ／ 入力 ${u.in.toLocaleString()} + 出力 ${u.out.toLocaleString()} トークン ／ $${u.usd.toFixed(3)}<br>
+      1回あたり平均 ${fmtYen(u.usd / u.n)}
+    </div>
+    <table class="t" style="margin-top:10px">
+      <tr><th>月</th><th>回数</th><th>トークン</th><th>金額</th></tr>
+      ${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.n}</td><td>${(v.in + v.out).toLocaleString()}</td><td>${(usdToJpy(v.usd) || 0).toFixed(1)}円</td></tr>`).join('')}
+    </table>
+    <div class="tiny muted" style="margin-top:8px">※ 概算です。正確な請求額はコンソールのUsageをご確認ください。</div>
+    <button class="btn ghost sm full" style="margin-top:8px" data-a="resetusage">利用状況をリセット</button>
   </div>`;
 }
 
@@ -803,8 +837,12 @@ function viewSettings() {
         <option value="exploit" ${st.coach === 'exploit' ? 'selected' : ''}>エクスプロイト重視（相手の傾向を突く）</option>
         <option value="icm" ${st.coach === 'icm' ? 'selected' : ''}>ICM重視（賞金効率・バブル対応）</option>
       </select></label>
-    <label class="f"><span>通貨単位</span>
-      <input type="text" id="st-cur" value="${esc(st.currency)}"></label>
+    <div class="grid2">
+      <label class="f"><span>通貨単位</span>
+        <input type="text" id="st-cur" value="${esc(st.currency)}"></label>
+      <label class="f"><span>為替レート（1ドル＝何円）</span>
+        <input type="number" id="st-rate" value="${num(st.usdJpy, 155)}" inputmode="decimal"></label>
+    </div>
     <div class="grid2">
       <button class="btn" data-a="savesettings">設定を保存</button>
       <button class="btn ghost" data-a="testapi">接続テスト</button>
@@ -815,6 +853,8 @@ function viewSettings() {
       ※ ブラウザから直接APIを呼ぶ都合上、<b>https で公開したページ</b>から使うのが確実です（ファイルを直接開いた場合は通信が拒否されることがあります）。その場合は「プロンプトをコピー」機能をお使いください。
     </div>
   </div>
+
+  ${usageCard()}
 
   <div class="card">
     <h2>データ</h2>
@@ -962,6 +1002,30 @@ function streetState(h, st) {
   };
 }
 
+/** そのストリートより前に、そのポジションが投入した合計（BB） */
+function committedBefore(h, st, pos) {
+  const order = ['pre', 'flop', 'turn', 'river'];
+  const stop = order.indexOf(st);
+  let t = 0;
+  for (let i = 0; i < stop; i++) {
+    const s2 = order[i];
+    let m = 0;
+    if (s2 === 'pre') {
+      if (pos === 'SB' || pos === 'BTN/SB') m = 0.5;
+      if (pos === 'BB') m = 1;
+    }
+    for (const a of (h.streets[s2] || [])) {
+      if (a.pos === pos && a.act !== 'fold' && a.act !== 'check') m = Math.max(m, num(a.amt));
+    }
+    t += m;
+  }
+  return r1(t);
+}
+/** そのストリート開始時点で、その人が「まだ出せる額」＝オールインの上限 */
+function remainingStack(h, st, pos) {
+  return r1(Math.max(0, num(h.effBB) - committedBefore(h, st, pos)));
+}
+
 function heroContrib(h) {
   let t = 0;
   for (const st of ['pre', 'flop', 'turn', 'river']) {
@@ -1078,8 +1142,8 @@ function viewHand() {
       <button class="btn" data-a="ai-hand" data-id="${h.id}">🤖 このハンドを分析</button>
       <button class="btn ghost" data-a="copyprompt" data-id="${h.id}">プロンプトをコピー</button>
     </div>
-    <div id="ai-out" style="margin-top:12px">${h.ai ? `<div class="aibox">${esc(h.ai.text)}</div>
-      <div class="tiny muted" style="margin-top:6px">${esc(h.ai.at)} · ${esc(h.ai.model)}</div>` : ''}</div>
+    <div id="ai-out" style="margin-top:12px">${h.ai ? `<div class="aibox">${mdLite(h.ai.text)}</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(h.ai.at)} · ${esc(h.ai.model)}${h.ai.usage ? '<br>' + esc(usageLine(h.ai.usage)) : ''}</div>` : ''}</div>
   </div>
 
   <div class="card">
@@ -1146,15 +1210,16 @@ function streetBlock(h, st, used) {
   const facing = toCall > 0;
 
   // 金額クイックボタン
+  const allinAmt = actor ? remainingStack(h, st.k, actor) : num(h.effBB);
   let quick;
   if (facing) {
     quick = [{ l: '2.5x', v: r1(cb * 2.5) }, { l: '3x', v: r1(cb * 3) },
-    { l: 'ポットレイズ', v: r1(pot + cb) }, { l: 'All-in', v: h.effBB }];
+    { l: 'ポットレイズ', v: r1(pot + cb) }, { l: 'All-in', v: allinAmt }];
   } else if (st.k === 'pre') {
-    quick = [{ l: '2.2', v: 2.2 }, { l: '2.5', v: 2.5 }, { l: '3', v: 3 }, { l: 'All-in', v: h.effBB }];
+    quick = [{ l: '2.2', v: 2.2 }, { l: '2.5', v: 2.5 }, { l: '3', v: 3 }, { l: 'All-in', v: allinAmt }];
   } else {
     quick = [{ l: '1/3', v: r1(pot / 3) }, { l: '1/2', v: r1(pot / 2) }, { l: '2/3', v: r1(pot * 2 / 3) },
-    { l: 'Pot', v: r1(pot) }, { l: 'All-in', v: h.effBB }];
+    { l: 'Pot', v: r1(pot) }, { l: 'All-in', v: allinAmt }];
   }
 
   // 選べるアクション
@@ -1184,6 +1249,7 @@ function streetBlock(h, st, used) {
       <div class="tiny muted">${isHero ? 'あなたの番' : '相手の番'}</div>
       <div class="who2">${esc(actor)}${isHero ? ' ★あなた' : ''}</div>
       <div class="tiny">${facing ? `コールに <b style="color:var(--blue)">${toCall}BB</b> 必要（相手の額 ${cb}BB）` : 'ベットはまだ出ていません'} ／ ポット ${pot}BB</div>
+      <div class="tiny muted">残りスタック ${allinAmt}BB（これがオールインの上限）</div>
     </div>
     <div class="chips actbtns">
       ${choices.map(k => {
@@ -1467,6 +1533,64 @@ ${body || '-'}
 ※ 記録ハンド数が少ない場合は、統計的に断定せず「サンプル不足」と明記してください。`;
 }
 
+/* ---------- 料金と使用量 ---------- */
+// USD / 100万トークン  [入力, 出力]
+const PRICES = {
+  'claude-opus-5': [5, 25],
+  'claude-sonnet-5': [2, 10],
+  'claude-haiku-4-5': [1, 5],
+  'claude-fable-5': [10, 50]
+};
+function priceOf(model) {
+  if (!model) return null;
+  if (PRICES[model]) return PRICES[model];
+  const k = Object.keys(PRICES).find(x => model.indexOf(x) === 0);
+  return k ? PRICES[k] : null;
+}
+/** 料金（USD）。料金表に無いモデルは null */
+function costUSD(model, inTok, outTok) {
+  const p = priceOf(model);
+  if (!p) return null;
+  return inTok / 1e6 * p[0] + outTok / 1e6 * p[1];
+}
+const usdToJpy = usd => usd == null ? null : usd * (num(DB.settings.usdJpy) || 155);
+const fmtYen = usd => {
+  const y = usdToJpy(usd);
+  if (y == null) return '料金表に無いモデル';
+  return y < 1 ? '約' + y.toFixed(2) + '円' : '約' + y.toFixed(1) + '円';
+};
+
+function monthKey() { return today().slice(0, 7); }
+
+/** 1回の呼び出しを使用量に加算し、その明細を返す */
+function recordUsage(model, inTok, outTok) {
+  const usd = costUSD(model, inTok, outTok);
+  DB.usage = DB.usage || { n: 0, in: 0, out: 0, usd: 0, months: {} };
+  const u = DB.usage;
+  u.n++; u.in += inTok; u.out += outTok; u.usd += (usd || 0);
+  const mk = monthKey();
+  u.months[mk] = u.months[mk] || { n: 0, in: 0, out: 0, usd: 0 };
+  const m = u.months[mk];
+  m.n++; m.in += inTok; m.out += outTok; m.usd += (usd || 0);
+  save();
+  return { model, in: inTok, out: outTok, usd };
+}
+const usageLine = (u) => !u ? '' :
+  `入力 ${(u.in || 0).toLocaleString()} / 出力 ${(u.out || 0).toLocaleString()} トークン ・ ${fmtYen(u.usd)}`;
+
+/* ---------- Markdown簡易描画（見出しと太字だけ） ---------- */
+function mdLite(t) {
+  let s = esc(String(t || ''));
+  s = s.replace(/^\s*#{1,6}\s*(.+)$/gm, '<span class="mdh">$1</span>');
+  s = s.replace(/^\s*(【.+?】.*)$/gm, '<span class="mdh">$1</span>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  s = s.replace(/^\s*[-*]\s+/gm, '・');
+  // 見出しは display:block なので、前後の余分な改行を詰める
+  s = s.replace(/(<span class="mdh">[\s\S]*?<\/span>)\n+/g, '$1');
+  s = s.replace(/\n{2,}(<span class="mdh">)/g, '\n$1');
+  return s.trim();
+}
+
 /* ---------- API 呼び出し ---------- */
 /** エラーを日本語の原因つきに変換 */
 function apiError(status, msg) {
@@ -1513,25 +1637,40 @@ async function callAPI(user, maxTokens) {
   let j = {};
   try { j = await res.json(); } catch (e) { }
   if (!res.ok) throw new Error(apiError(res.status, (j.error && (j.error.message || j.error.type)) || res.statusText));
-  const text = isAnthropic
-    ? (j.content || []).map(c => c.text || '').join('').trim()
-    : (((j.choices || [])[0] || {}).message || {}).content;
-  if (!text) throw new Error('AIから空の回答が返りました。もう一度お試しください。');
-  return text.trim();
+
+  let text, inTok, outTok, cut;
+  if (isAnthropic) {
+    text = (j.content || []).map(c => c.text || '').join('');
+    inTok = ((j.usage || {}).input_tokens) || 0;
+    outTok = ((j.usage || {}).output_tokens) || 0;
+    cut = j.stop_reason === 'max_tokens';
+  } else {
+    const ch = (j.choices || [])[0] || {};
+    text = (ch.message || {}).content || '';
+    inTok = ((j.usage || {}).prompt_tokens) || 0;
+    outTok = ((j.usage || {}).completion_tokens) || 0;
+    cut = ch.finish_reason === 'length';
+  }
+  if (!text.trim()) throw new Error('AIから空の回答が返りました。もう一度お試しください。');
+  const usage = recordUsage(st.model, inTok, outTok);
+  if (cut) text += '\n\n（※ 出力の上限に達したため、ここで途切れています。もう一度実行するか、モデルを変更してみてください）';
+  return { text: text.trim(), usage, truncated: !!cut };
 }
 
-const callAI = (user) => callAPI(user, 2000);
+const callAI = (user, maxTokens) => callAPI(user, maxTokens || 4000);
 
 /** 接続テスト */
 async function testAPI() {
   const out = $('#api-test');
   if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> 接続を確認しています…</div>';
   try {
-    const t = await callAPI('これは接続テストです。「接続できました」とだけ返してください。', 32);
+    const r = await callAPI('これは接続テストです。「接続できました」とだけ返してください。', 64);
     if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--accent)">✅ 接続成功
 プロバイダ: ${esc(DB.settings.provider)}
 モデル: ${esc(DB.settings.model)}
-AIの返答: ${esc(t)}</div>`;
+AIの返答: ${esc(r.text)}
+${esc(usageLine(r.usage))}</div>`;
+    render();
   } catch (e) {
     if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--red)">❌ 接続できませんでした
 
@@ -1539,13 +1678,13 @@ ${esc(String(e.message || e))}</div>`;
   }
 }
 
-async function runAI(promptText, onDone, outSel) {
+async function runAI(promptText, onDone, outSel, maxTokens) {
   const out = $(outSel || '#ai-out');
-  if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> AIが分析しています…</div>';
+  if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> AIが分析しています…（20〜40秒ほど）</div>';
   try {
-    const text = await callAI(promptText);
-    onDone(text);
-    toast('分析が完了しました');
+    const r = await callAI(promptText, maxTokens);
+    onDone(r.text, r.usage);
+    toast('分析が完了しました ' + fmtYen(r.usage.usd));
   } catch (e) {
     const msg = String(e.message || e);
     if (out) out.innerHTML = `<div class="aibox" style="border-left-color:var(--red)">分析に失敗しました。\n${esc(msg)}\n\nヒント: ローカルファイルから直接開いている場合、ブラウザの制限でAPIを呼べません。GitHub Pagesなどhttpsで公開したページから使うか、「プロンプトをコピー」してClaudeアプリに貼り付けてください。</div>`;
@@ -1716,7 +1855,7 @@ const ACTIONS = {
     // 金額のいらないアクションは即登録（コール額は自動計算）
     if (d.k === 'fold' || d.k === 'check') { addAction(d.st, 0); return; }
     if (d.k === 'call') { addAction(d.st, S.currentBet); return; }
-    if (d.k === 'allin') DRAFT[d.st].amt = h.effBB;
+    if (d.k === 'allin') DRAFT[d.st].amt = remainingStack(h, d.st, actor);
     render();
     const el = $('#amt-' + d.st); if (el) el.focus();
   },
@@ -1777,23 +1916,28 @@ const ACTIONS = {
   // AI
   'ai-hand': (d) => {
     const h = DB.hands.find(x => x.id === d.id);
-    runAI(handPrompt(h), (text) => {
-      h.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+    runAI(handPrompt(h), (text, usage) => {
+      h.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model, usage };
       save(); render();
-    });
+    }, '#ai-out', 4000);
   },
   'ai-session': (d) => {
     const s = DB.sessions.find(x => x.id === d.id);
-    runAI(sessionPrompt(s), (text) => {
-      s.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+    runAI(sessionPrompt(s), (text, usage) => {
+      s.ai = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model, usage };
       save(); render();
-    }, '#app');
+    }, '#app', 6000);
   },
   'ai-leak': () => {
-    runAI(leakPrompt(), (text) => {
-      DB.leakAI = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model };
+    runAI(leakPrompt(), (text, usage) => {
+      DB.leakAI = { text, at: new Date().toLocaleString('ja-JP'), model: DB.settings.model, usage };
       save(); render();
-    }, '#app');
+    }, '#app', 6000);
+  },
+  resetusage: () => {
+    if (!confirm('AI利用状況の記録をリセットします。よろしいですか？')) return;
+    DB.usage = { n: 0, in: 0, out: 0, usd: 0, months: {} };
+    save(); render(); toast('リセットしました');
   },
   copyprompt: (d) => {
     const h = DB.hands.find(x => x.id === d.id);
@@ -1821,6 +1965,7 @@ const ACTIONS = {
     DB.settings.model = $('#st-model').value.trim();
     DB.settings.coach = $('#st-coach').value;
     DB.settings.currency = $('#st-cur').value || '円';
+    if ($('#st-rate')) DB.settings.usdJpy = num($('#st-rate').value, 155);
     save(); toast('設定を保存しました'); render();
   },
   testapi: () => { snapSettings(); testAPI(); },
@@ -1867,6 +2012,7 @@ function snapSettings() {
   DB.settings.model = $('#st-model').value.trim();
   DB.settings.coach = $('#st-coach').value;
   if ($('#st-cur')) DB.settings.currency = $('#st-cur').value || '円';
+  if ($('#st-rate')) DB.settings.usdJpy = num($('#st-rate').value, 155);
   save();
 }
 
