@@ -215,7 +215,7 @@ details[open] summary:before{content:'▾ ';}
    =========================================================== */
 'use strict';
 
-const APP_VERSION = 'v1.8';
+const APP_VERSION = 'v1.9';
 const KEY = 'pokerlog_mtt_v1';
 const DEFAULTS = {
   v: 1,
@@ -1248,6 +1248,12 @@ function viewHand() {
   </div>
 
   <div class="card">
+    <h2>GTO参照データ <span class="muted tiny">チャート判定・必要勝率・勝率シミュレーション</span></h2>
+    <button class="btn ghost sm full" data-a="gtoshow" data-id="${h.id}">計算して表示</button>
+    <div id="gto-out" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
     <h2>ハンドヒストリー</h2>
     <pre class="tiny muted" style="white-space:pre-wrap;margin:0;font-family:ui-monospace,monospace">${esc(handHistory(h))}</pre>
   </div>
@@ -1546,6 +1552,276 @@ function saveSessionFromForm(isNew) {
 
 
 /* ===========================================================
+   GTO参照データ
+   - プリフロップチャート（ソルバー解の一般的な近似）
+   - レンジ判定 / 必要勝率 / SPR / モンテカルロ・エクイティ
+   すべて端末内で計算し、AIプロンプトに「客観データ」として渡す
+   =========================================================== */
+
+const RANK_V = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
+const V_RANK = Object.fromEntries(Object.entries(RANK_V).map(([k, v]) => [v, k]));
+
+/** ['Qd','Qc'] -> 'QQ' / ['As','Kh'] -> 'AKo' / ['Kd','Jd'] -> 'KJs' */
+function handCat(cards) {
+  if (!cards || cards.filter(Boolean).length < 2) return null;
+  let [a, b] = cards;
+  let r1 = RANK_V[a[0]], r2 = RANK_V[b[0]];
+  if (r2 > r1) { [a, b] = [b, a];[r1, r2] = [r2, r1]; }
+  if (r1 === r2) return V_RANK[r1] + V_RANK[r2];
+  return V_RANK[r1] + V_RANK[r2] + (a[1] === b[1] ? 's' : 'o');
+}
+
+/** レンジ文字列（"55+, A9s+, KQo, A5s-A2s" など）にハンドが含まれるか */
+function inRange(cat, rangeStr) {
+  if (!cat || !rangeStr) return false;
+  const pair = cat.length === 2;
+  const hi = RANK_V[cat[0]], lo = RANK_V[cat[1]], suf = cat[2] || '';
+  for (let tok of rangeStr.split(',').map(t => t.trim()).filter(Boolean)) {
+    const plus = tok.endsWith('+');
+    if (plus) tok = tok.slice(0, -1);
+    if (tok.includes('-')) {                       // 範囲 A5s-A2s / 99-66
+      const [t1, t2] = tok.split('-');
+      if (t1.length === 2 && pair) {               // ペア範囲
+        const a = RANK_V[t1[0]], b = RANK_V[t2[0]];
+        if (hi <= Math.max(a, b) && hi >= Math.min(a, b)) return true;
+      } else if (t1.length === 3 && !pair && suf === t1[2] && RANK_V[t1[0]] === hi) {
+        const a = RANK_V[t1[1]], b = RANK_V[t2[1]];
+        if (lo <= Math.max(a, b) && lo >= Math.min(a, b)) return true;
+      }
+      continue;
+    }
+    if (tok.length === 2) {                        // ペア
+      if (!pair) continue;
+      const base = RANK_V[tok[0]];
+      if (plus ? hi >= base : hi === base) return true;
+      continue;
+    }
+    if (tok.length === 3) {                        // スーテッド/オフ
+      if (pair || suf !== tok[2]) continue;
+      if (RANK_V[tok[0]] !== hi) continue;
+      const base = RANK_V[tok[1]];
+      if (plus ? (lo >= base && lo < hi) : lo === base) return true;
+    }
+  }
+  return false;
+}
+
+/* ---- プリフロップチャート（9max MTT・GTOソルバー解の一般的な近似） ---- */
+const GTO_OPEN = {
+  'UTG': '55+, ATs+, A5s-A4s, KTs+, QTs+, JTs, T9s, 98s, AQo+, AJo',
+  'UTG+1': '44+, A9s+, A5s-A3s, KTs+, QTs+, J9s+, T9s, 98s, AJo+, KQo',
+  'MP': '33+, A8s+, A5s-A2s, K9s+, Q9s+, J9s+, T8s+, 98s, 87s, AJo+, KQo',
+  'MP+1': '33+, A7s+, A5s-A2s, K9s+, Q9s+, J9s+, T8s+, 97s+, 87s, 76s, ATo+, KJo+, QJo',
+  'HJ': '22+, A2s+, K9s+, Q9s+, J9s+, T8s+, 97s+, 86s+, 76s, 65s, ATo+, KJo+, QJo',
+  'CO': '22+, A2s+, K7s+, Q9s+, J8s+, T8s+, 97s+, 86s+, 75s+, 65s, 54s, A9o+, KTo+, QTo+, JTo',
+  'BTN': '22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 96s+, 86s+, 75s+, 64s+, 54s, A2o+, K9o+, Q9o+, J9o+, T9o',
+  'SB': '22+, A2s+, K5s+, Q7s+, J8s+, T7s+, 97s+, 86s+, 75s+, 65s, 54s, A7o+, A5o, KTo+, QTo+, JTo',
+  'BTN/SB': '22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 96s+, 86s+, 75s+, 64s+, 54s, A2o+, K9o+, Q9o+, J9o+, T9o'
+};
+/** オープンプッシュ（Nash近似）: 実効スタック帯ごと */
+const GTO_PUSH = {
+  10: {
+    'UTG': '55+, A7s+, A5s, KQs, ATo+',
+    'UTG+1': '44+, A5s+, KJs+, ATo+, KQo',
+    'MP': '44+, A4s+, KTs+, QJs, A9o+, KQo',
+    'MP+1': '33+, A2s+, KTs+, QTs+, JTs, A8o+, KJo+',
+    'HJ': '33+, A2s+, K9s+, QTs+, JTs, A7o+, KJo+, QJo',
+    'CO': '22+, A2s+, K7s+, Q9s+, J9s+, T9s, A4o+, KTo+, QJo',
+    'BTN': '22+, A2s+, K2s+, Q6s+, J8s+, T8s+, 98s, A2o+, K8o+, Q9o+, JTo',
+    'SB': '22+, A2s+, K2s+, Q2s+, J5s+, T7s+, 97s+, 87s, A2o+, K5o+, Q8o+, J9o+, T9o',
+    'BTN/SB': '22+, A2s+, K2s+, Q2s+, J5s+, T7s+, 97s+, 87s, A2o+, K5o+, Q8o+, J9o+, T9o'
+  },
+  15: {
+    'UTG': '77+, ATs+, KQs, AJo+',
+    'UTG+1': '66+, A9s+, KJs+, AJo+',
+    'MP': '66+, A8s+, KTs+, QJs, ATo+, KQo',
+    'MP+1': '55+, A5s+, KTs+, QTs+, ATo+, KQo',
+    'HJ': '44+, A4s+, K9s+, QTs+, JTs, A9o+, KJo+',
+    'CO': '33+, A2s+, K8s+, Q9s+, J9s+, T9s, A7o+, KTo+, QJo',
+    'BTN': '22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 98s, A2o+, K9o+, QTo+, JTo',
+    'SB': '22+, A2s+, K4s+, Q6s+, J7s+, T7s+, 97s+, A2o+, K8o+, Q9o+, JTo',
+    'BTN/SB': '22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 98s, A2o+, K9o+, QTo+, JTo'
+  }
+};
+const GTO_NOTE = '※内蔵チャートはGTOソルバー解の一般的な近似（9max・アンティあり）。厳密解ではないが基準として十分。';
+
+/* ---------- 5/7カード評価（エクイティ計算用） ---------- */
+function cardNum(c) { return { r: RANK_V[c[0]], s: c[1] }; }
+
+function eval5(cs) {
+  const rs = cs.map(c => c.r).sort((a, b) => b - a);
+  const suits = {};
+  cs.forEach(c => suits[c.s] = (suits[c.s] || 0) + 1);
+  const flush = Object.values(suits).some(n => n === 5);
+  const cnt = {};
+  rs.forEach(r => cnt[r] = (cnt[r] || 0) + 1);
+  const groups = Object.entries(cnt).map(([r, n]) => [+r, n])
+    .sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+  // ストレート（A-5対応）
+  const uniq = [...new Set(rs)];
+  let straightHi = 0;
+  if (uniq.length === 5) {
+    if (uniq[0] - uniq[4] === 4) straightHi = uniq[0];
+    else if (uniq[0] === 14 && uniq[1] === 5 && uniq[4] === 2) straightHi = 5;
+  }
+  const kick = groups.flatMap(([r, n]) => Array(n).fill(r));
+  const pack = arr => arr.reduce((a, v) => a * 15 + v, 0);
+  if (flush && straightHi) return 8e10 + straightHi;
+  if (groups[0][1] === 4) return 7e10 + pack([groups[0][0], groups[1][0]]);
+  if (groups[0][1] === 3 && groups[1][1] === 2) return 6e10 + pack([groups[0][0], groups[1][0]]);
+  if (flush) return 5e10 + pack(rs);
+  if (straightHi) return 4e10 + straightHi;
+  if (groups[0][1] === 3) return 3e10 + pack(kick);
+  if (groups[0][1] === 2 && groups[1][1] === 2) return 2e10 + pack(kick);
+  if (groups[0][1] === 2) return 1e10 + pack(kick);
+  return pack(rs);
+}
+
+function eval7(cs) {
+  let best = -1;
+  for (let i = 0; i < 6; i++) for (let j = i + 1; j < 7; j++) {
+    const five = cs.filter((_, k) => k !== i && k !== j);
+    const v = eval5(five);
+    if (v > best) best = v;
+  }
+  return best;
+}
+
+const FULL_DECK = (() => {
+  const d = [];
+  for (const r of Object.keys(RANK_V)) for (const s of ['s', 'h', 'd', 'c']) d.push(r + s);
+  return d;
+})();
+
+/**
+ * モンテカルロ・エクイティ。
+ * villain=null なら「ランダムハンド」との勝率。boardは0/3/4/5枚。
+ */
+function equityMC(hero, villain, board, iters) {
+  iters = iters || 1600;
+  board = (board || []).filter(Boolean);
+  const used = new Set([...hero, ...(villain || []), ...board]);
+  const deck = FULL_DECK.filter(c => !used.has(c));
+  const hc = hero.map(cardNum);
+  let win = 0, tie = 0;
+  for (let it = 0; it < iters; it++) {
+    // Fisher–Yates 部分シャッフル
+    const d = deck.slice();
+    const need = (villain ? 0 : 2) + (5 - board.length);
+    for (let i = 0; i < need; i++) {
+      const j = i + Math.floor(Math.random() * (d.length - i));
+      [d[i], d[j]] = [d[j], d[i]];
+    }
+    let k = 0;
+    const vil = villain ? villain.slice() : [d[k++], d[k++]];
+    const fullBoard = board.concat(d.slice(k, k + (5 - board.length)));
+    const bn = fullBoard.map(cardNum);
+    const hv = eval7(hc.concat(bn));
+    const vv = eval7(vil.map(cardNum).concat(bn));
+    if (hv > vv) win++; else if (hv === vv) tie++;
+  }
+  return (win + tie / 2) / iters;
+}
+
+/* ---------- ハンドの客観データを組み立てる ---------- */
+function gtoContext(h) {
+  try {
+    const L = [];
+    const cat = handCat(h.cards.hero);
+    const eff = num(h.effBB);
+    L.push('【参照データ】アプリが計算した客観値。以下を分析の根拠として必ず引用すること。');
+
+    // --- プリフロップチャート判定 ---
+    if (cat) {
+      L.push(`■プリフロップ（自分: ${cat} / ${h.heroPos} / 実効${eff}BB）`);
+      const openR = GTO_OPEN[h.heroPos];
+      if (openR) {
+        L.push(`・オープンレンジ判定: ${inRange(cat, openR) ? '含まれる ✓' : '含まれない ✗'}（${h.heroPos}の基準レンジ: ${openR}）`);
+      } else if (h.heroPos === 'BB') {
+        L.push('・BBはオープンレンジ非該当（ディフェンス/3ベットの判断はエクイティと必要勝率で評価すること）');
+      }
+      if (eff <= 12) {
+        const p = GTO_PUSH[10][h.heroPos];
+        if (p) L.push(`・オープンプッシュ判定(≈10BB): ${inRange(cat, p) ? 'プッシュレンジに含まれる ✓' : '含まれない ✗'}`);
+      } else if (eff <= 18) {
+        const p = GTO_PUSH[15][h.heroPos];
+        if (p) L.push(`・オープンプッシュ判定(≈15BB): ${inRange(cat, p) ? 'プッシュレンジに含まれる ✓' : '含まれない ✗'}`);
+      }
+      L.push(GTO_NOTE);
+    }
+
+    // --- SPR ---
+    const flopPot = potBB(h, 'pre');
+    if ((h.streets.flop || []).length || h.cards.flop.filter(Boolean).length === 3) {
+      const behind = Math.max(0, eff - committedBefore(h, 'flop', h.heroPos));
+      if (flopPot > 0) L.push(`■フロップSPR: ${r1(behind / flopPot)}（残りスタック${r1(behind)}BB ÷ ポット${flopPot}BB）`);
+    }
+
+    // --- 各ストリートの必要勝率 / ベットサイズ ---
+    const order = ['pre', 'flop', 'turn', 'river'];
+    const oddsLines = [];
+    for (const stk of order) {
+      const base = stk === 'pre' ? anteBB(h) : potBB(h, order[order.indexOf(stk) - 1]);
+      const contrib = {};
+      if (stk === 'pre') {
+        const ps = positions(h.tableSize);
+        if (ps.includes('SB')) contrib['SB'] = 0.5;
+        if (ps.includes('BTN/SB')) contrib['BTN/SB'] = 0.5;
+        contrib['BB'] = 1;
+      }
+      const stJa = (STREETS.find(x => x.k === stk) || {}).ja || stk;
+      for (const a of (h.streets[stk] || [])) {
+        if (a.act === 'fold' || a.act === 'check') continue;
+        const before = contrib[a.pos] || 0;
+        const added = Math.max(0, num(a.amt) - before);
+        const potNow = base + Object.values(contrib).reduce((x, y) => x + y, 0);
+        if (a.hero && a.act === 'call' && added > 0) {
+          const req = added / (potNow + added);
+          oddsLines.push(`・${stJa}: 自分のコール ${r1(added)}BB → 必要勝率 ${(req * 100).toFixed(1)}%（ポット${r1(potNow)}BBに対して）`);
+        }
+        if (a.hero && (a.act === 'bet' || a.act === 'raise' || a.act === 'allin') && added > 0 && potNow > 0) {
+          oddsLines.push(`・${stJa}: 自分の${actJa(a.act)} ${r1(num(a.amt))}BB ＝ ポットの${(added / potNow * 100).toFixed(0)}%（相手の必要勝率 ${(added / (potNow + 2 * added) * 100).toFixed(1)}% / 自分のブラフ成功必要率 ${(added / (potNow + added) * 100).toFixed(1)}%）`);
+        }
+        contrib[a.pos] = Math.max(before, num(a.amt));
+      }
+    }
+    if (oddsLines.length) { L.push('■ポットオッズ / ベットサイズ'); L.push(...oddsLines); }
+
+    // --- エクイティ ---
+    if (h.cards.hero.filter(Boolean).length === 2) {
+      const vil = (h.villains || []).filter(Boolean).length === 2 ? h.villains : null;
+      const eqLines = [];
+      const stages = [
+        ['プリフロップ', []],
+        ['フロップ', h.cards.flop],
+        ['ターン', h.cards.flop.concat(h.cards.turn)],
+        ['リバー', h.cards.flop.concat(h.cards.turn, h.cards.river)]
+      ];
+      let prevLen = -1;
+      for (const [name, bd] of stages) {
+        const b = (bd || []).filter(Boolean);
+        if (name !== 'プリフロップ' && (b.length < 3 || b.length === prevLen)) continue;
+        prevLen = b.length;
+        const vsRnd = equityMC(h.cards.hero, null, b);
+        let line = `・${name}: 対ランダムハンド ${(vsRnd * 100).toFixed(0)}%`;
+        if (vil) line += ` ／ 対相手実ハンド(${cardsTxt(vil)}) ${(equityMC(h.cards.hero, vil, b) * 100).toFixed(0)}%`;
+        eqLines.push(line);
+      }
+      if (eqLines.length) {
+        L.push('■エクイティ（モンテカルロ1600回・誤差±2%程度）');
+        L.push(...eqLines);
+        if (vil) L.push('※「対相手実ハンド」は結果論の後知恵。判断の評価には各時点の情報だけを使うこと。');
+      }
+    }
+    return L.join('\n');
+  } catch (e) {
+    console.warn('gtoContext failed', e);
+    return '';
+  }
+}
+
+
+/* ===========================================================
    AI分析
    =========================================================== */
 const COACH = {
@@ -1568,9 +1844,17 @@ function systemPrompt() {
 }
 
 function handPrompt(h) {
+  const ctx = gtoContext(h);
   return `以下は私が実戦で記録した1ハンドです。各ストリートの判断を評価してください。
 
 ${handHistory(h)}
+
+${ctx}
+
+分析ルール:
+- 上の【参照データ】を根拠として必ず使うこと。チャート判定・必要勝率・エクイティの数値を本文中で引用する。
+- 参照データと矛盾する主観的な評価をしない。データが無い論点は「データなし」と明示した上で定性的に評価する。
+- コールの是非は「必要勝率 vs 推定エクイティ」の比較で論じる。
 
 次の見出しで出力してください：
 【状況整理】2-3行
@@ -2036,6 +2320,18 @@ const ACTIONS = {
     const h = currentHand(); if (!h) return;
     h.result = r1(potBB(h) - heroContrib(h));
     save(); render(); toast('ポット獲得として記録しました');
+  },
+
+  gtoshow: (d) => {
+    const h = DB.hands.find(x => x.id === d.id); if (!h) return;
+    const out = $('#gto-out');
+    if (out) out.innerHTML = '<div class="aibox"><span class="spin"></span> 計算中…</div>';
+    setTimeout(() => {
+      const t = gtoContext(h);
+      if (out) out.innerHTML = t
+        ? `<div class="aibox" style="border-left-color:var(--blue)">${mdLite(t)}</div>`
+        : '<div class="empty-state">ホールカードを入力すると計算できます</div>';
+    }, 30);
   },
 
   // 結果クイック
