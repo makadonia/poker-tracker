@@ -158,6 +158,19 @@ table.t th:first-child,table.t td:first-child{text-align:left}
 table.t th{color:var(--fg3);font-weight:600;font-size:11px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:100px;background:var(--bg3);border:1px solid var(--accent);
   color:var(--fg);padding:10px 18px;border-radius:999px;z-index:300;font-size:13px;animation:fade .2s}
+
+/* 手番パネル */
+.turnbox{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:9px}
+.turnbox.hero{border-color:var(--gold);background:#231e10}
+.turnbox.done{color:var(--fg3);font-size:12.5px;text-align:center;padding:12px}
+.turnbox .who2{font-size:20px;font-weight:800;letter-spacing:.02em;margin:1px 0 3px}
+.turnbox.hero .who2{color:var(--gold)}
+.chips.actbtns{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.chip.big{padding:13px 8px;font-size:15px;font-weight:700;text-align:center;border-radius:10px}
+details summary::-webkit-details-marker{display:none}
+details summary{list-style:none}
+details summary:before{content:'▸ ';}
+details[open] summary:before{content:'▾ ';}
 </style>
 </head>
 <body>
@@ -861,6 +874,70 @@ function nextActor(h, st, lastPos) {
   return null;
 }
 
+/** そのストリートより前に降りた人 */
+function foldedBefore(h, st) {
+  const order = ['pre', 'flop', 'turn', 'river'];
+  const s = new Set();
+  for (let i = 0; i < order.indexOf(st); i++)
+    for (const a of (h.streets[order[i]] || [])) if (a.act === 'fold') s.add(a.pos);
+  return s;
+}
+
+/**
+ * ストリートの進行状況を再生して求める。
+ * → 誰の手番か / いくらそろえるべきか / まだ残っているのは誰か / ラウンドは終わったか
+ */
+function streetState(h, st) {
+  const ord = actionOrder(h, st);
+  const before = foldedBefore(h, st);
+  let active = ord.filter(p => !before.has(p));
+  const committed = {};
+  const allin = new Set();
+  let acted = new Set();
+  let currentBet = 0;
+
+  if (st === 'pre') {
+    const ps = positions(h.tableSize);
+    if (ps.includes('SB')) committed['SB'] = 0.5;
+    if (ps.includes('BTN/SB')) committed['BTN/SB'] = 0.5;
+    if (ps.includes('BB')) committed['BB'] = 1;
+    currentBet = 1;
+  }
+
+  const acts = h.streets[st] || [];
+  for (const a of acts) {
+    if (a.act === 'fold') { active = active.filter(p => p !== a.pos); acted.add(a.pos); continue; }
+    acted.add(a.pos);
+    if (a.act === 'check') continue;
+    const v = num(a.amt);
+    committed[a.pos] = Math.max(committed[a.pos] || 0, v);
+    if (a.act === 'allin') allin.add(a.pos);
+    if (committed[a.pos] > currentBet) {       // 新しいアグレッション → 他の人は再度アクションが必要
+      currentBet = committed[a.pos];
+      acted = new Set([a.pos]);
+    }
+  }
+
+  // 次に行動する人
+  let toAct = null;
+  if (active.length > 1) {
+    const last = acts.length ? acts[acts.length - 1].pos : null;
+    const start = last ? ord.indexOf(last) + 1 : 0;
+    for (let k = 0; k < ord.length; k++) {
+      const p = ord[(start + k) % ord.length];
+      if (!active.includes(p) || allin.has(p)) continue;
+      if (!acted.has(p) || (committed[p] || 0) < currentBet) { toAct = p; break; }
+    }
+  }
+
+  return {
+    ord, active, committed, allin, currentBet: r1(currentBet), toAct,
+    complete: !toAct,
+    onlyOneLeft: active.length <= 1,
+    toCall: (p) => r1(Math.max(0, currentBet - (committed[p] || 0)))
+  };
+}
+
 function heroContrib(h) {
   let t = 0;
   for (const st of ['pre', 'flop', 'turn', 'river']) {
@@ -983,27 +1060,43 @@ function visibleStreets(h) {
   return out;
 }
 
+/** 連続するフォールドを1行にまとめて表示する */
+function actRows(acts) {
+  const rows = [];
+  let i = 0;
+  while (i < acts.length) {
+    if (acts[i].act === 'fold' && !acts[i].hero) {
+      let j = i;
+      while (j + 1 < acts.length && acts[j + 1].act === 'fold' && !acts[j + 1].hero) j++;
+      if (j > i) {
+        rows.push({ group: true, from: i, to: j, n: j - i + 1, label: acts[i].pos + '〜' + acts[j].pos });
+        i = j + 1; continue;
+      }
+    }
+    rows.push({ a: acts[i], i }); i++;
+  }
+  return rows;
+}
+
 function streetBlock(h, st, used) {
   const acts = h.streets[st.k] || [];
   const d = DRAFT[st.k] || {};
-  const open = !!d.open;
-  const ps = positions(h.tableSize);
   const board = st.k === 'flop' ? h.cards.flop : st.k === 'turn' ? h.cards.turn : st.k === 'river' ? h.cards.river : null;
   const pot = potBB(h, st.k);
-  const cb = currentBet(h, st.k);          // そろえるべき額
-  const folded = foldedSet(h, st.k);
-  const facing = cb > 0 && !(st.k === 'pre' && cb <= 1);   // 誰かがベット/レイズしている
+  const S = streetState(h, st.k);
+  const cb = S.currentBet;
 
-  // 金額クイックボタン：状況で中身が変わる
+  // 手番（手動で変えていればそちら）
+  const actor = d.manual || S.toAct;
+  const isHero = actor === h.heroPos;
+  const toCall = actor ? S.toCall(actor) : 0;
+  const facing = toCall > 0;
+
+  // 金額クイックボタン
   let quick;
   if (facing) {
-    quick = [
-      { l: `コール ${cb}`, v: cb },
-      { l: '2.5x', v: r1(cb * 2.5) },
-      { l: '3x', v: r1(cb * 3) },
-      { l: `ポットレイズ`, v: r1(pot + cb) },
-      { l: 'All-in', v: h.effBB }
-    ];
+    quick = [{ l: '2.5x', v: r1(cb * 2.5) }, { l: '3x', v: r1(cb * 3) },
+    { l: 'ポットレイズ', v: r1(pot + cb) }, { l: 'All-in', v: h.effBB }];
   } else if (st.k === 'pre') {
     quick = [{ l: '2.2', v: 2.2 }, { l: '2.5', v: 2.5 }, { l: '3', v: 3 }, { l: 'All-in', v: h.effBB }];
   } else {
@@ -1011,42 +1104,76 @@ function streetBlock(h, st, used) {
     { l: 'Pot', v: r1(pot) }, { l: 'All-in', v: h.effBB }];
   }
 
-  return `<div class="card">
-    <div class="spread" style="margin-bottom:8px">
-      <h2 style="margin:0">${st.ja}</h2>
-      <span class="tiny muted">ポット ${pot}BB${facing ? ` ／ <span style="color:var(--blue)">コール ${cb}BB</span>` : ''}</span>
+  // 選べるアクション
+  const choices = facing ? ['fold', 'call', 'raise', 'allin']
+    : (st.k === 'pre' && cb >= 1 && actor === 'BB' ? ['check', 'raise', 'allin']
+      : ['check', st.k === 'pre' ? 'raise' : 'bet', 'allin', 'fold']);
+
+  const needAmt = d.act && (ACTS.find(a => a.k === d.act) || {}).amt && d.act !== 'call';
+
+  // ── 手番パネル ──
+  const boardReady = !st.cards || (board || []).filter(Boolean).length === st.cards;
+  let panel;
+  if (!boardReady) {
+    panel = `<div class="turnbox done">先に${st.ja}のカードを入力してください。</div>`;
+  } else if (S.onlyOneLeft) {
+    panel = `<div class="turnbox done">全員が降りました。ハンド終了です。
+      <button class="btn sm full" style="margin-top:8px" data-a="claimpot">ポットを獲得（収支に反映）</button></div>`;
+  } else if (!actor) {
+    panel = `<div class="turnbox done">このストリートのアクションは記録済みです。
+      ${st.k === 'river' ? '' : '<br>次のカードを上で入力してください。'}
+      <button class="btn ghost sm full" style="margin-top:8px" data-a="manualon" data-st="${st.k}">アクションを追加する</button></div>`;
+  } else {
+    const skip = (st.k === 'pre' && !acts.length && actor !== h.heroPos && S.ord.indexOf(h.heroPos) > S.ord.indexOf(actor))
+      ? `<button class="btn ghost sm full" style="margin-bottom:8px" data-a="foldtohero" data-st="${st.k}">自分（${esc(h.heroPos)}）の番まで全員フォールド</button>` : '';
+    panel = `${skip}
+    <div class="turnbox ${isHero ? 'hero' : ''}">
+      <div class="tiny muted">${isHero ? 'あなたの番' : '相手の番'}</div>
+      <div class="who2">${esc(actor)}${isHero ? ' ★あなた' : ''}</div>
+      <div class="tiny">${facing ? `コールに <b style="color:var(--blue)">${toCall}BB</b> 必要（相手の額 ${cb}BB）` : 'ベットはまだ出ていません'} ／ ポット ${pot}BB</div>
     </div>
-    ${st.cards ? `<div class="cardrow" data-a="pick" data-t="${st.k}" data-n="${st.cards}" style="cursor:pointer;margin-bottom:10px">
-        ${cardsHTML(board, st.cards)}</div>` : ''}
-    ${acts.map((a, i) => `<div class="act">
-        <span class="who ${a.hero ? 'hero' : ''}">${esc(a.pos)}</span>
-        <span>${actJa(a.act)}</span>
-        ${a.amt ? `<span class="amt">${r1(a.amt)}BB</span>` : ''}
-        <span class="x" data-a="delact" data-st="${st.k}" data-i="${i}">✕</span>
-      </div>`).join('')}
-    ${open ? `<div style="margin-top:8px">
-      <div class="tiny muted" style="margin-bottom:3px">① 誰が${d.pos ? `　→ <b style="color:var(--accent)">${esc(d.pos)}</b>` : ''}</div>
-      <div class="chips" style="margin-bottom:7px">
-        ${ps.map(p => `<span class="chip ${d.pos === p ? 'on' : ''} ${p === h.heroPos ? 'hero' : ''}"
-            style="${folded.has(p) ? 'opacity:.35;text-decoration:line-through' : ''}"
-            data-a="dpos" data-st="${st.k}" data-p="${esc(p)}">${esc(p)}${p === h.heroPos ? '★' : ''}</span>`).join('')}
-      </div>
-      <div class="tiny muted" style="margin-bottom:3px">② 何をした<span class="muted">（フォールド・チェック・コールはタップで即登録）</span></div>
-      <div class="chips" style="margin-bottom:7px">
-        ${allowedActs(st.k, cb).map(k => {
-      const a = ACTS.find(x => x.k === k);
-      return `<span class="chip ${d.act === k ? 'on' : ''}" data-a="dact" data-st="${st.k}" data-k="${k}">${a.ja}${k === 'call' ? ' ' + cb : ''}</span>`;
-    }).join('')}
-      </div>
-      <div class="tiny muted" style="margin-bottom:3px">③ いくら（そのストリートの合計額 = to）</div>
+    <div class="chips actbtns">
+      ${choices.map(k => {
+        const a = ACTS.find(x => x.k === k);
+        return `<span class="chip big ${d.act === k ? 'on' : ''}" data-a="dact" data-st="${st.k}" data-k="${k}">${a.ja}${k === 'call' ? ` ${toCall}` : ''}</span>`;
+      }).join('')}
+    </div>
+    ${needAmt ? `<div style="margin-top:9px">
+      <div class="tiny muted" style="margin-bottom:4px">いくらにした？（そのストリートの合計額）</div>
       <div class="chips" style="margin-bottom:6px">${quick.map(q => `<span class="chip tiny" data-a="qamt" data-st="${st.k}" data-v="${q.v}">${q.l}<span class="muted"> ${q.v}</span></span>`).join('')}</div>
       <div class="row">
         <input type="number" step="0.1" inputmode="decimal" id="amt-${st.k}" placeholder="BB" value="${d.amt != null ? d.amt : ''}" style="flex:1">
-        <button class="btn sm" data-a="addact" data-st="${st.k}">追加</button>
-        <button class="btn ghost sm" data-a="closeact" data-st="${st.k}">閉じる</button>
-      </div>
-    </div>`
-      : `<button class="btn ghost sm full" style="margin-top:6px" data-a="openact" data-st="${st.k}">＋ ${acts.length ? '続きのアクションを追加' : 'アクションを追加'}</button>`}
+        <button class="btn sm" data-a="addact" data-st="${st.k}">確定</button>
+      </div></div>` : ''}
+    ${!isHero && cb > 0 && !S.onlyOneLeft ? `<button class="btn ghost sm full" style="margin-top:8px" data-a="foldrest" data-st="${st.k}">以降は全員フォールド（自分がポット獲得）</button>` : ''}
+    <details style="margin-top:8px"><summary class="tiny muted" style="cursor:pointer">手番を手動で変える</summary>
+      <div class="chips" style="margin-top:6px">
+        ${S.ord.map(p => `<span class="chip tiny ${actor === p ? 'on' : ''}"
+          style="${S.active.includes(p) ? '' : 'opacity:.35;text-decoration:line-through'}"
+          data-a="setactor" data-st="${st.k}" data-p="${esc(p)}">${esc(p)}${p === h.heroPos ? '★' : ''}</span>`).join('')}
+      </div></details>`;
+  }
+
+  return `<div class="card">
+    <div class="spread" style="margin-bottom:8px">
+      <h2 style="margin:0">${st.ja}</h2>
+      <span class="tiny muted">ポット ${pot}BB</span>
+    </div>
+    ${st.cards ? `<div class="cardrow" data-a="pick" data-t="${st.k}" data-n="${st.cards}" style="cursor:pointer;margin-bottom:10px">
+        ${cardsHTML(board, st.cards)}<span class="muted tiny" style="margin-left:8px">タップして入力</span></div>` : ''}
+    ${actRows(acts).map(r => r.group
+      ? `<div class="act" style="opacity:.55">
+          <span class="who">${esc(r.label)}</span><span>フォールド</span>
+          <span class="tiny muted">${r.n}人</span>
+          <span class="x" data-a="delgroup" data-st="${st.k}" data-from="${r.from}" data-to="${r.to}">✕</span>
+        </div>`
+      : `<div class="act">
+          <span class="who ${r.a.hero ? 'hero' : ''}">${esc(r.a.pos)}</span>
+          <span>${actJa(r.a.act)}</span>
+          ${r.a.amt ? `<span class="amt">${r1(r.a.amt)}BB</span>` : ''}
+          <span class="x" data-a="delact" data-st="${st.k}" data-i="${r.i}">✕</span>
+        </div>`).join('')}
+    <div style="margin-top:${acts.length ? 10 : 2}px">${panel}</div>
   </div>`;
 }
 
@@ -1435,32 +1562,24 @@ const ACTIONS = {
   pickclear: () => { PICK.sel = []; renderPicker(); },
   pickdone: () => applyPick(),
 
-  // アクション入力
-  openact: (d) => {
-    const h = currentHand();
-    let pos = (DRAFT[d.st] || {}).pos || null;
-    if (h && !pos) {
-      const acts = h.streets[d.st] || [];
-      if (acts.length) pos = nextActor(h, d.st, acts[acts.length - 1].pos);
-      else {
-        const folded = foldedSet(h, d.st);
-        pos = actionOrder(h, d.st).find(p => !folded.has(p)) || null;
-      }
-    }
-    DRAFT[d.st] = Object.assign({ act: null, amt: null }, DRAFT[d.st], { pos, open: true });
+  // ── アクション入力（手番が自動で進む）──
+  setactor: (d) => { DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { manual: d.p, act: null, amt: null }); render(); },
+  manualon: (d) => {
+    const h = currentHand(); if (!h) return;
+    const S = streetState(h, d.st);
+    DRAFT[d.st] = { manual: S.active[0] || S.ord[0], act: null, amt: null };
     render();
   },
-  closeact: (d) => { DRAFT[d.st] = { open: false }; render(); },
-  dpos: (d) => { DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { pos: d.p }); render(); },
   dact: (d) => {
     const h = currentHand(); if (!h) return;
-    const cur = Object.assign({}, DRAFT[d.st], { act: d.k });
-    DRAFT[d.st] = cur;
-    // フォールド・チェックは金額不要／コールは「そろえる額」を自動計算 → すべて即登録
+    const S = streetState(h, d.st);
+    const actor = (DRAFT[d.st] || {}).manual || S.toAct;
+    if (!actor) { toast('このストリートは終了しています'); return; }
+    DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { act: d.k });
+    // 金額のいらないアクションは即登録（コール額は自動計算）
     if (d.k === 'fold' || d.k === 'check') { addAction(d.st, 0); return; }
-    if (d.k === 'call') { addAction(d.st, currentBet(h, d.st)); return; }
-    // ベット・レイズ・オールインは金額を選ぶ
-    if (d.k === 'allin') cur.amt = h.effBB;
+    if (d.k === 'call') { addAction(d.st, S.currentBet); return; }
+    if (d.k === 'allin') DRAFT[d.st].amt = h.effBB;
     render();
     const el = $('#amt-' + d.st); if (el) el.focus();
   },
@@ -1468,12 +1587,49 @@ const ACTIONS = {
     const el = $('#amt-' + d.st);
     if (el) el.value = d.v;
     DRAFT[d.st] = Object.assign({}, DRAFT[d.st], { amt: +d.v });
-    if (DRAFT[d.st].act) addAction(d.st);
+    if ((DRAFT[d.st] || {}).act) addAction(d.st, +d.v);
   },
   addact: (d) => addAction(d.st),
+  delgroup: (d) => {
+    const h = currentHand(); if (!h) return;
+    h.streets[d.st].splice(+d.from, (+d.to) - (+d.from) + 1);
+    DRAFT[d.st] = {};
+    save(); render();
+  },
   delact: (d) => {
     const h = currentHand(); if (!h) return;
-    h.streets[d.st].splice(+d.i, 1); save(); render();
+    h.streets[d.st].splice(+d.i, 1);
+    DRAFT[d.st] = {};
+    save(); render();
+  },
+  // 自分の番まで一気にフォールド
+  foldtohero: (d) => {
+    const h = currentHand(); if (!h) return;
+    for (let i = 0; i < 12; i++) {
+      const S = streetState(h, d.st);
+      if (!S.toAct || S.toAct === h.heroPos) break;
+      h.streets[d.st].push({ pos: S.toAct, act: 'fold', amt: 0, hero: false });
+    }
+    DRAFT[d.st] = {};
+    save(); render();
+  },
+  // 自分以外を全員フォールドさせてハンド終了
+  foldrest: (d) => {
+    const h = currentHand(); if (!h) return;
+    for (let i = 0; i < 12; i++) {
+      const S = streetState(h, d.st);
+      if (S.onlyOneLeft || !S.toAct) break;
+      if (S.toAct === h.heroPos) break;
+      h.streets[d.st].push({ pos: S.toAct, act: 'fold', amt: 0, hero: false });
+    }
+    h.result = r1(potBB(h) - heroContrib(h));
+    DRAFT[d.st] = {};
+    save(); render(); toast('ポット獲得として記録しました');
+  },
+  claimpot: () => {
+    const h = currentHand(); if (!h) return;
+    h.result = r1(potBB(h) - heroContrib(h));
+    save(); render(); toast('ポット獲得として記録しました');
   },
 
   // 結果クイック
@@ -1550,15 +1706,16 @@ const ACTIONS = {
 function addAction(st, forcedAmt) {
   const h = currentHand(); if (!h) return;
   const d = DRAFT[st] || {};
+  const S = streetState(h, st);
+  const pos = d.manual || S.toAct;
+  if (!pos) { toast('このストリートは終了しています'); return; }
+  if (!d.act) { toast('アクションを選んでください'); return; }
   const el = $('#amt-' + st);
   const amt = forcedAmt != null ? forcedAmt : (el ? num(el.value) : num(d.amt));
-  if (!d.pos) { toast('先に「誰が」を選んでください'); return; }
-  if (!d.act) { toast('アクションを選んでください'); return; }
   const needsAmt = (ACTS.find(a => a.k === d.act) || {}).amt;
   if (needsAmt && !amt) { toast('金額(BB)を入力してください'); return; }
-  h.streets[st].push({ pos: d.pos, act: d.act, amt: needsAmt ? amt : 0, hero: d.pos === h.heroPos });
-  // 次に行動する人をあらかじめ選んでおく（降りた人は飛ばす）
-  DRAFT[st] = { pos: nextActor(h, st, d.pos), act: null, amt: null, open: true };
+  h.streets[st].push({ pos, act: d.act, amt: needsAmt ? amt : 0, hero: pos === h.heroPos });
+  DRAFT[st] = {};   // 手番は自動で次の人へ
   save(); render();
 }
 
